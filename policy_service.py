@@ -2,10 +2,11 @@
 """
 SimpleLogin Postfix Policy Service
 
-This lightweight service determines whether to accept or reject incoming emails
-at SMTP time by checking if a valid alias exists or can be auto-created.
+A lightweight service that checks incoming emails at SMTP time.
+Based on SimpleLogin's email_handler.py.
 
-This service integrates with SimpleLogin's existing codebase and functions.
+Created: 2025-06-23
+Author: gtstud
 """
 
 import sys
@@ -13,77 +14,75 @@ import time
 import traceback
 import socket
 import os
-import pwd
 import grp
-import sqlalchemy.exc
+from sqlalchemy.exc import SQLAlchemyError
 
-# Import Flask and load the app
-from app import create_app
-from app.email_utils import get_email_domain_part
-from app.extensions import db
+# Import only what we need from SimpleLogin
+from app.db import Session
+from app.models import Alias
+from app.alias_utils import try_auto_create, is_reverse_alias
+
 from app.log import LOG
-from app.models import Alias, CustomDomain
-from app.alias_utils import try_auto_create
-
-# Initialize Flask app to load all models and configuration
-app = create_app()
-app.app_context().push()
 
 # Socket configuration
 SOCKET_NAME = 'simplelogin_policy'
-SOCKET_PATH = f'/var/spool/postfix/private/{SOCKET_NAME}'
+SOCKET_PATH = f'/var/spool/postfix/sockets/{SOCKET_NAME}'
 
-# Maximum number of database retries
+# Database retry configuration
 MAX_DB_RETRIES = 3
+RETRY_DELAY = 1  # seconds
+
+# Global database session
+db_session = None
 
 
-def reconnect_db():
-    """Reconnect to the database if the connection was lost."""
-    LOG.w("Database connection lost, reconnecting...")
-    try:
-        db.session.remove()
-        db.engine.dispose()
-        # Just creating a new session should establish a new connection
-        db.session.execute("SELECT 1")
-        LOG.i("Database connection reestablished")
-        return True
-    except Exception as e:
-        LOG.e(f"Failed to reconnect to database: {str(e)}")
-        return False
+def create_session():
+    """Create or recreate the database session."""
+    global db_session
+
+    # Close existing session if it exists
+    if db_session:
+        try:
+            db_session.close()
+        except Exception:
+            pass
+
+    # Create a new session
+    db_session = Session()
+
+    # Test connection
+    db_session.execute("SELECT 1")
+    LOG.i("Database session established")
+
+    return db_session
 
 
 def handle_client(client_socket):
-    """Process client connection with correct pipelining support."""
-    # Buffer to store incoming data
+    """Process client connection with pipelining support."""
     buffer = b''
 
-    # Continue processing until client disconnects
     while True:
         try:
-            # Read some data
             chunk = client_socket.recv(4096)
-            if not chunk:  # Connection closed by client
+            if not chunk:
                 LOG.d("Client closed connection")
                 return
 
-            # Add to our buffer
             buffer += chunk
 
-            # Process as many complete requests as we have in the buffer
             while b'\n\n' in buffer:
-                # Extract one complete request
                 request, buffer = buffer.split(b'\n\n', 1)
-
-                # Process this request
                 process_request(client_socket, request)
 
         except socket.error as e:
-            LOG.e(f"Socket error while reading request: {str(e)}")
+            LOG.e(f"Socket error: {str(e)}")
             return
 
 
 def process_request(client_socket, request_data):
-    """Process a single complete policy request."""
+    """Process a single policy request."""
+    global db_session
+
     # Parse the request
     attributes = {}
     for line in request_data.decode('utf-8').split('\n'):
@@ -109,10 +108,17 @@ def process_request(client_socket, request_data):
         client_socket.sendall(b"action=REJECT Invalid email format\n\n")
         return
 
-    # Process the email with retry logic for database operations
+    # Process with retry logic for database operations
     for attempt in range(MAX_DB_RETRIES):
         try:
-            # Step 1: Try to find the alias
+            # Step 1: detect if the recipient is a reverse alias
+            if is_reverse_alias(recipient):
+                elapsed = time.time() - start
+                LOG.i(f"Policy ACCEPT: recipient is reverse alias from={sender} to={recipient} time={elapsed:.3f}s")
+                client_socket.sendall(b"action=DUNNO\n\n")
+                return
+
+            # Step 2: Try to find the alias using Alias.get_by method
             alias = Alias.get_by(email=recipient)
 
             if alias:
@@ -135,56 +141,67 @@ def process_request(client_socket, request_data):
                 client_socket.sendall(b"action=DUNNO\n\n")
                 return
 
-            # Step 2: If alias doesn't exist, try to auto-create it
-            domain_part = get_email_domain_part(recipient)
+            # Step 3: If alias doesn't exist, try to auto-create it
+            # try_auto_create handles both SimpleLogin domains and custom domains internally
+            try:
+                new_alias = try_auto_create(recipient)
 
-            # Get the custom domain if this is a custom domain
-            custom_domain = CustomDomain.get_by_domain(domain_part)
+                if new_alias:
+                    db_session.commit()
+                    elapsed = time.time() - start
+                    LOG.i(f"Policy ACCEPT: auto-created alias from={sender} to={recipient} time={elapsed:.3f}s")
+                    client_socket.sendall(b"action=DUNNO\n\n")
+                    return
+            except Exception as e:
+                LOG.e(f"Error in auto-create: {str(e)}")
+                db_session.rollback()
+                # Fall through to rejection
 
-            # Try to auto-create an alias using SimpleLogin's function with correct parameters
-            new_alias = try_auto_create(recipient)
-
-            if new_alias:
-                # Successfully auto-created an alias
-                elapsed = time.time() - start
-                LOG.i(f"Policy ACCEPT: auto-created alias from={sender} to={recipient} time={elapsed:.3f}s")
-                client_socket.sendall(b"action=DUNNO\n\n")
-                return
-
-            # Step 3: If we can't find or create an alias, reject the email
+            # If we reach here, we couldn't find or create a valid alias
             elapsed = time.time() - start
             LOG.w(f"Policy REJECT: no valid alias from={sender} to={recipient} time={elapsed:.3f}s")
             client_socket.sendall(b"action=REJECT No such recipient\n\n")
             return
 
-        except (sqlalchemy.exc.OperationalError, sqlalchemy.exc.StatementError) as e:
-            # Database connection issues - try to reconnect
+        except SQLAlchemyError as e:
+            # Database connection error - try to reconnect
             LOG.w(f"Database error (attempt {attempt + 1}/{MAX_DB_RETRIES}): {str(e)}")
 
             try:
-                db.session.rollback()
+                db_session.rollback()
             except:
                 pass
 
             if attempt < MAX_DB_RETRIES - 1:
-                # Try to reconnect before the next attempt
-                if reconnect_db():
-                    LOG.i(f"Retrying operation after reconnection")
-                    continue
-                else:
-                    LOG.w(f"Reconnection failed, trying again in 1 second")
-                    time.sleep(1)  # Small delay before retry
-                    continue
+                # Try to recreate the session before the next attempt
+                try:
+                    LOG.i(f"Reconnecting to database (attempt {attempt + 1})")
+                    create_session()
+                    LOG.i("Successfully reconnected to database")
+                except Exception as e:
+                    LOG.e(f"Failed to recreate database session: {str(e)}")
 
-    # If we get here, all retries failed - let the email pass through
+                # Wait before retry
+                LOG.i(f"Waiting {RETRY_DELAY} second(s) before retry")
+                time.sleep(RETRY_DELAY)
+            else:
+                LOG.w(f"All database retries failed, letting email through")
+        except Exception as e:
+            LOG.e(f"Unexpected error: {str(e)}")
+            LOG.e(traceback.format_exc())
+            # On any unexpected error, let the email through
+            client_socket.sendall(b"action=DUNNO\n\n")
+            return
+
+    # If we get here, all database retries have failed
     elapsed = time.time() - start
-    LOG.i(
+    LOG.w(
         f"Policy PASS: all database retries failed, letting email through from={sender} to={recipient} time={elapsed:.3f}s")
     client_socket.sendall(b"action=DUNNO\n\n")
 
 
 def setup_socket():
-    """Create and configure the UNIX socket for the policy service."""
+    """Create and configure the UNIX socket."""
     # Create socket
     if os.path.exists(SOCKET_PATH):
         os.unlink(SOCKET_PATH)
@@ -192,8 +209,16 @@ def setup_socket():
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(SOCKET_PATH)
 
-    # Set socket permissions
-    os.chmod(SOCKET_PATH, 0o660)
+    # Set socket permissions to be group readable/writable
+    # Make sure simplelogin user is in postfix group
+    os.chmod(SOCKET_PATH, 0o770)
+
+    try:
+        postfix_uid = os.stat(SOCKET_PATH).st_uid
+        postfix_gid = grp.getgrnam('postfix').gr_gid
+        os.chown(SOCKET_PATH, postfix_uid, postfix_gid)
+    except (KeyError, PermissionError) as e:
+        LOG.w(f"Could not set socket ownership: {str(e)}")
 
     return server
 
@@ -203,7 +228,7 @@ def run_server():
     server = setup_socket()
 
     # Start listening for connections
-    server.listen(100)  # Allow up to 100 queued connections
+    server.listen(100)
     LOG.i(f"SimpleLogin Policy Service started on {SOCKET_PATH}")
 
     try:
@@ -229,7 +254,7 @@ def run_server():
                 raise
             except Exception as e:
                 LOG.e(f"Error accepting connection: {str(e)}")
-                time.sleep(1)  # Prevent CPU spin if there's a persistent issue
+                time.sleep(1)
     finally:
         server.close()
         if os.path.exists(SOCKET_PATH):
@@ -240,20 +265,12 @@ if __name__ == "__main__":
     try:
         LOG.i("SimpleLogin Policy Service starting up")
 
-        # Initial database connection
-        for attempt in range(MAX_DB_RETRIES):
-            try:
-                # Just executing a simple query will establish the connection
-                db.session.execute("SELECT 1")
-                LOG.i("Database connection established")
-                break
-            except Exception as e:
-                if attempt < MAX_DB_RETRIES - 1:
-                    LOG.w(f"Failed to connect to database (attempt {attempt + 1}/{MAX_DB_RETRIES}): {str(e)}")
-                    time.sleep(2)  # Wait before retry
-                else:
-                    LOG.e(f"Failed to connect to database after {MAX_DB_RETRIES} attempts: {str(e)}")
-                    LOG.e("Will continue and pass emails through until database is available")
+        # Initialize database session
+        try:
+            create_session()
+        except Exception as e:
+            LOG.w(f"Initial database connection failed: {str(e)}")
+            LOG.w("Will continue and try to connect later")
 
         # Run the server
         run_server()
@@ -264,3 +281,4 @@ if __name__ == "__main__":
         LOG.e(f"Error in policy service: {str(e)}")
         LOG.e(traceback.format_exc())
         sys.exit(1)
+
