@@ -15,13 +15,14 @@ import traceback
 import socket
 import os
 import grp
+import logging
 from sqlalchemy.exc import SQLAlchemyError
 
 # Import only what we need from SimpleLogin
 from app.db import Session
 from app.models import Alias
-from app.alias_utils import try_auto_create, is_reverse_alias
-
+from app.alias_utils import try_auto_create
+from app.email_utils import is_reverse_alias
 from app.log import LOG
 
 # Socket configuration
@@ -263,6 +264,7 @@ def run_server():
 
 if __name__ == "__main__":
     try:
+        LOG.setLevel(logging.INFO)
         LOG.i("SimpleLogin Policy Service starting up")
 
         # Initialize database session
