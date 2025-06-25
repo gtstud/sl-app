@@ -35,6 +35,7 @@ import argparse
 import email
 import time
 import uuid
+import logging
 from email import encoders
 from email.encoders import encode_noop
 from email.message import Message
@@ -2457,4 +2458,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     LOG.i("Listen for port %s", args.port)
+    LOG.setLevel(logging.WARNING)
     main(port=args.port)

@@ -4,6 +4,7 @@ Not meant for running job at precise time (+- 1h)
 """
 
 import time
+import logging
 from typing import List, Optional
 
 import arrow
@@ -402,5 +403,6 @@ def execute():
 
 if __name__ == "__main__":
     send_version_event("job_runner")
+    LOG.setLevel(logging.WARNING)
     while True:
         execute()

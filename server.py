@@ -598,14 +598,14 @@ def local_main():
     # Disabled in python 3.12 as it collides with the default CPython profiler
     app.config["DEBUG_TB_PROFILER_ENABLED"] = False
     app.config["DEBUG_TB_INTERCEPT_REDIRECTS"] = False
-    app.debug = True
+    app.debug = False
     DebugToolbarExtension(app)
 
     # disable the sqlalchemy debug panels because of "IndexError: pop from empty list" from:
     # duration = time.time() - conn.info['query_start_time'].pop(-1)
     # app.config["DEBUG_TB_PANELS"] += ("flask_debugtoolbar_sqlalchemy.SQLAlchemyPanel",)
 
-    app.run(debug=True, port=7777)
+    app.run(debug=False, port=7777)
 
     # uncomment to run https locally
     # LOG.d("enable https")
