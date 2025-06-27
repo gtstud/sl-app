@@ -20,7 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 # Import only what we need from SimpleLogin
 from app.db import Session
-from app.models import Alias
+from app.models import (Alias, User, BlockBehaviourEnum)
 from app.alias_utils import try_auto_create
 from app.email_utils import is_reverse_alias
 from app.log import LOG
@@ -123,12 +123,40 @@ def process_request(client_socket, request_data):
             alias = Alias.get_by(email=recipient)
 
             if alias:
+
+
+
+
+
+
+
+
+
+
+
+
                 # Check if alias is enabled and user is active
                 if not alias.enabled:
+                    # Get the user associated with this alias
+                    user = User.get(alias.user_id)
                     elapsed = time.time() - start
-                    LOG.w(f"Policy REJECT: disabled alias from={sender} to={recipient} time={elapsed:.3f}s")
-                    client_socket.sendall(b"action=REJECT Recipient address disabled\n\n")
+
+                    # Check if user has block_behaviour set to return_2xx
+                    if user.block_behaviour == BlockBehaviourEnum.return_2xx:
+                        LOG.w(f"Policy PASS (disabled but block_behaviour=return_2xx): from={sender} to={recipient} time={elapsed:.3f}s")
+                        client_socket.sendall(b"action=DUNNO\n\n")
+                    else:  # user.block_behaviour == BlockBehaviourEnum.return_5xx
+                        LOG.w(f"Policy REJECT: disabled alias from={sender} to={recipient} time={elapsed:.3f}s")
+                        client_socket.sendall(b"action=REJECT Recipient address disabled\n\n")
                     return
+
+
+
+#                if not alias.enabled:
+#                    elapsed = time.time() - start
+#                    LOG.w(f"Policy REJECT: disabled alias from={sender} to={recipient} time={elapsed:.3f}s")
+#                    client_socket.sendall(b"action=REJECT Recipient address disabled\n\n")
+#                    return
 
                 if not alias.user or not alias.user.is_active:
                     elapsed = time.time() - start

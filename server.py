@@ -592,6 +592,8 @@ def local_main():
     config.COLOR_LOG = True
     app = create_app()
 
+    LOG.setLevel(logging.INFO)
+
     # enable flask toolbar
     from flask_debugtoolbar import DebugToolbarExtension
 
