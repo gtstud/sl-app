@@ -592,8 +592,6 @@ def local_main():
     config.COLOR_LOG = True
     app = create_app()
 
-    LOG.setLevel(logging.INFO)
-
     # enable flask toolbar
     from flask_debugtoolbar import DebugToolbarExtension
 
@@ -608,6 +606,8 @@ def local_main():
     # app.config["DEBUG_TB_PANELS"] += ("flask_debugtoolbar_sqlalchemy.SQLAlchemyPanel",)
 
     app.run(debug=False, port=7777)
+
+    LOG.setLevel(logging.INFO)
 
     # uncomment to run https locally
     # LOG.d("enable https")
