@@ -33,30 +33,6 @@ SOCKET_PATH = f'/var/spool/postfix/sockets/{SOCKET_NAME}'
 MAX_DB_RETRIES = 3
 RETRY_DELAY = 1  # seconds
 
-# Global database session
-db_session = None
-
-
-def create_session():
-    """Create or recreate the database session."""
-    global db_session
-
-    # Close existing session if it exists
-    if db_session:
-        try:
-            db_session.close()
-        except Exception:
-            pass
-
-    # Create a new session
-    db_session = Session()
-
-    # Test connection
-    db_session.execute("SELECT 1")
-    LOG.i("Database session established")
-
-    return db_session
-
 
 def handle_client(client_socket):
     """Process client connection with pipelining support."""
@@ -82,7 +58,6 @@ def handle_client(client_socket):
 
 def process_request(client_socket, request_data):
     """Process a single policy request."""
-    global db_session
 
     # Parse the request
     attributes = {}
@@ -176,15 +151,15 @@ def process_request(client_socket, request_data):
                 new_alias = try_auto_create(recipient)
 
                 if new_alias:
-                    db_session.commit()
                     elapsed = time.time() - start
                     LOG.i(f"Policy ACCEPT: auto-created alias from={sender} to={recipient} time={elapsed:.3f}s")
                     client_socket.sendall(b"action=DUNNO\n\n")
                     return
             except Exception as e:
                 LOG.e(f"Error in auto-create: {str(e)}")
-                db_session.rollback()
-                # Fall through to rejection
+                Session.rollback()
+                client_socket.sendall(b"action=451 4.3.0 Temporary internal error\n\n")
+                return
 
             # If we reach here, we couldn't find or create a valid alias
             elapsed = time.time() - start
@@ -197,36 +172,28 @@ def process_request(client_socket, request_data):
             LOG.w(f"Database error (attempt {attempt + 1}/{MAX_DB_RETRIES}): {str(e)}")
 
             try:
-                db_session.rollback()
+                Session.remove()
             except:
                 pass
 
             if attempt < MAX_DB_RETRIES - 1:
-                # Try to recreate the session before the next attempt
-                try:
-                    LOG.i(f"Reconnecting to database (attempt {attempt + 1})")
-                    create_session()
-                    LOG.i("Successfully reconnected to database")
-                except Exception as e:
-                    LOG.e(f"Failed to recreate database session: {str(e)}")
-
                 # Wait before retry
                 LOG.i(f"Waiting {RETRY_DELAY} second(s) before retry")
                 time.sleep(RETRY_DELAY)
             else:
-                LOG.w(f"All database retries failed, letting email through")
+                LOG.w(f"All database retries failed, returning temporary failure")
         except Exception as e:
             LOG.e(f"Unexpected error: {str(e)}")
             LOG.e(traceback.format_exc())
-            # On any unexpected error, let the email through
-            client_socket.sendall(b"action=DUNNO\n\n")
+            # On any unexpected error, return a temporary failure
+            client_socket.sendall(b"action=451 4.3.0 Temporary internal error\n\n")
             return
 
     # If we get here, all database retries have failed
     elapsed = time.time() - start
     LOG.w(
-        f"Policy PASS: all database retries failed, letting email through from={sender} to={recipient} time={elapsed:.3f}s")
-    client_socket.sendall(b"action=DUNNO\n\n")
+        f"Policy TEMPFAIL: all database retries failed, deferring email from={sender} to={recipient} time={elapsed:.3f}s")
+    client_socket.sendall(b"action=451 4.3.0 Temporary internal error\n\n")
 
 
 def setup_socket():
@@ -269,9 +236,9 @@ def run_server():
                 except Exception as e:
                     LOG.e(f"Error handling client: {str(e)}")
                     LOG.e(traceback.format_exc())
-                    # On any unhandled exception, try to tell Postfix to continue processing
+                    # On any unhandled exception, return a temporary failure
                     try:
-                        client.sendall(b"action=DUNNO\n\n")
+                        client.sendall(b"action=451 4.3.0 Temporary internal error\n\n")
                     except:
                         pass
                 finally:
@@ -297,10 +264,15 @@ if __name__ == "__main__":
 
         # Initialize database session
         try:
-            create_session()
+            Session.execute("SELECT 1")
+            LOG.i("Database session established")
         except Exception as e:
             LOG.w(f"Initial database connection failed: {str(e)}")
             LOG.w("Will continue and try to connect later")
+            try:
+                Session.remove()
+            except:
+                pass
 
         # Run the server
         run_server()
