@@ -144,8 +144,8 @@ MAX_NB_SUBDOMAIN = 5
 ENFORCE_SPF = "ENFORCE_SPF" in os.environ
 
 # override postfix server locally
-# use 240.0.0.1 here instead of 10.0.0.1 as existing SL instances use the 240.0.0.0 network
-POSTFIX_SERVER = os.environ.get("POSTFIX_SERVER", "240.0.0.1")
+POSTFIX_SERVERS = get_env_csv("POSTFIX_SERVER", "240.0.0.1")
+POSTFIX_BACKUP_SERVERS = get_env_csv("POSTFIX_BACKUP_SERVERS", "")
 
 DISABLE_REGISTRATION = "DISABLE_REGISTRATION" in os.environ
 
@@ -160,6 +160,7 @@ else:
     default_postfix_port = 25
 POSTFIX_PORT = int(os.environ.get("POSTFIX_PORT", default_postfix_port))
 POSTFIX_TIMEOUT = int(os.environ.get("POSTFIX_TIMEOUT", 3))
+POSTFIX_CONNECT_TIMEOUT = float(os.environ.get("POSTFIX_CONNECT_TIMEOUT", 1))
 
 # ["domain1.com", "domain2.com"]
 OTHER_ALIAS_DOMAINS = sl_getenv("OTHER_ALIAS_DOMAINS", list)
@@ -354,6 +355,8 @@ LOAD_PGP_EMAIL_HANDLER = "LOAD_PGP_EMAIL_HANDLER" in os.environ
 APPLE_API_SECRET = os.environ.get("APPLE_API_SECRET")
 # for Mac App
 MACAPP_APPLE_API_SECRET = os.environ.get("MACAPP_APPLE_API_SECRET")
+# When enabled, /apple/update_notification validates the shared secret in the webhook payload
+APPLE_WEBHOOK_SECRET_CHECK_ENABLED = "APPLE_WEBHOOK_SECRET_CHECK_ENABLED" in os.environ
 
 # <<<<< ALERT EMAIL >>>>
 
@@ -448,13 +451,6 @@ NOREPLY = os.environ.get("NOREPLY", f"noreply@{EMAIL_DOMAIN}")
 # list of no reply addresses
 NOREPLIES = sl_getenv("NOREPLIES", list) or [NOREPLY]
 
-COINBASE_WEBHOOK_SECRET = os.environ.get("COINBASE_WEBHOOK_SECRET")
-COINBASE_CHECKOUT_ID = os.environ.get("COINBASE_CHECKOUT_ID")
-COINBASE_API_KEY = os.environ.get("COINBASE_API_KEY")
-try:
-    COINBASE_YEARLY_PRICE = float(os.environ["COINBASE_YEARLY_PRICE"])
-except Exception:
-    COINBASE_YEARLY_PRICE = 30.00
 
 ALIAS_LIMIT = os.environ.get("ALIAS_LIMIT") or "100/day;50/hour;5/minute"
 
@@ -656,6 +652,9 @@ EVENT_WEBHOOK_ENABLED_USER_IDS: Optional[List[int]] = read_webhook_enabled_user_
 # It defaults to the regular DB_URI in case it's needed
 EVENT_LISTENER_DB_URI = os.environ.get("EVENT_LISTENER_DB_URI", DB_URI)
 
+MAX_BOUNCES_1D = int(os.environ.get("MAX_BOUNCES_1D", 12))
+MAX_BOUNCES_1W = int(os.environ.get("MAX_BOUNCES_1W", 10))
+
 
 def read_partner_dict(var: str) -> dict[int, str]:
     partner_value = get_env_dict(var)
@@ -702,3 +701,18 @@ MAC_KEY = read_hex_data("MAC_KEY_HEX", (FLASK_SECRET + "mackey").encode("utf-8")
 ABUSER_HKDF_SALT = read_hex_data(
     "ABUSER_HKDF_SALT", (FLASK_SECRET + "absalt").encode("utf-8")
 )
+
+INVALID_MX_IPS = get_env_csv("INVALID_MX_IPS", [])
+
+USE_RUST_PGP = "USE_RUST_PGP" in os.environ
+
+SMTP_SIZE_LIMIT = int(os.environ.get("SMTP_SIZE_LIMIT", 41943040))  # 40MiB
+
+PARTNER_SUPPORT_URL = os.environ.get("PARTNER_SUPPORT_URL", None)
+
+ADMIN_FIDO_REQUIRED = os.environ.get("ADMIN_FIDO_REQUIRED", "none")
+if ADMIN_FIDO_REQUIRED not in ("none", "any", "hardware"):
+    raise ValueError("ADMIN_FIDO_REQUIRED is not a valid value")
+ADMIN_GRACE_PERIOD = int(os.environ.get("ADMIN_GRACE_PERIOD", 43200))
+
+DROP_PGP_KEY_ATTACHMENTS_ON_REPLY = "DROP_PGP_KEY_ATTACHMENTS_ON_REPLY" in os.environ

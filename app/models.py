@@ -43,6 +43,7 @@ from app.errors import (
 from app.handler.unsubscribe_encoder import UnsubscribeAction, UnsubscribeEncoder
 from app.log import LOG
 from app.oauth_models import Scope
+from app.partner_utils import PartnerData
 from app.pw_models import PasswordOracle
 from app.utils import (
     convert_to_id,
@@ -242,6 +243,12 @@ class AuditLogActionEnum(EnumE):
     stop_trial = 11
     unlink_user = 12
     delete_custom_domain = 13
+    clear_delete_on = 14
+    update_subdomain_quota = 15
+    update_directory_quota = 16
+    disable_mailbox = 17
+    enable_mailbox = 18
+    change_default_mailbox = 19
 
 
 class Phase(EnumE):
@@ -310,7 +317,7 @@ class IntEnumType(sa.types.TypeDecorator):
 @dataclasses.dataclass
 class AliasOptions:
     show_sl_domains: bool = True
-    show_partner_domains: Optional[Partner] = None
+    show_partner_domains: Optional[PartnerData] = None
     show_partner_premium: Optional[bool] = None
 
 
@@ -354,6 +361,13 @@ class Fido(Base, ModelMixin):
     sign_count = sa.Column(sa.BigInteger(), nullable=False)
     name = sa.Column(sa.String(128), nullable=False, unique=False)
     user_id = sa.Column(sa.ForeignKey("users.id", ondelete="cascade"), nullable=True)
+    # Credential metadata for debugging and proper authentication routing
+    credential_type = sa.Column(sa.String(32), nullable=True)
+    authenticator_attachment = sa.Column(sa.String(32), nullable=True)
+    transports = sa.Column(sa.JSON(), nullable=True)  # JSON array, e.g. ["usb","nfc"]
+    aaguid = sa.Column(
+        sa.String(36), nullable=True
+    )  # UUID format, identifies device model
 
     __table_args__ = (sa.Index("ix_fido_user_id", "user_id"),)
 
@@ -1764,7 +1778,7 @@ class Alias(Base, ModelMixin):
 
         new_alias = cls(**kw)
         user = User.get(new_alias.user_id)
-        if user.is_premium():
+        if user.is_premium() and not user.in_trial():
             limits = config.ALIAS_CREATE_RATE_LIMIT_PAID
         else:
             limits = config.ALIAS_CREATE_RATE_LIMIT_FREE
@@ -2317,6 +2331,8 @@ class EmailLog(Base, ModelMixin):
     @classmethod
     def create(cls, *args, **kwargs):
         commit = kwargs.pop("commit", False)
+        if "message_id" in kwargs and kwargs["message_id"]:
+            kwargs["message_id"] = kwargs["message_id"][:250]
         email_log = super().create(*args, **kwargs)
         Session.flush()
         if "alias_id" in kwargs:
@@ -2459,6 +2475,9 @@ class DeletedAlias(Base, ModelMixin):
         nullable=False,
         default=AliasDeleteReason.Unspecified,
         server_default=str(AliasDeleteReason.Unspecified.value),
+    )
+    alias_id = sa.Column(
+        sa.Integer, nullable=True, server_default=None, default=None, index=True
     )
 
     @classmethod
@@ -2701,6 +2720,13 @@ class AutoCreateRule(Base, ModelMixin):
     # the order in which rules are evaluated in case there are multiple rules
     order = sa.Column(sa.Integer, default=0, nullable=False)
 
+    # optional display name applied to aliases created by this rule
+    display_name = sa.Column(
+        sa.String(128),
+        nullable=True,
+        server_default=None,
+    )
+
     custom_domain = orm.relationship(CustomDomain, backref="_auto_create_rules")
 
     mailboxes = orm.relationship(
@@ -2734,6 +2760,7 @@ class DomainDeletedAlias(Base, ModelMixin):
     __table_args__ = (
         sa.UniqueConstraint("domain_id", "email", name="uq_domain_trash"),
         sa.Index("ix_domain_deleted_alias_user_id", "user_id"),
+        sa.Index("ix_domain_deleted_alias_alias_id", "alias_id"),
     )
 
     email = sa.Column(sa.String(256), nullable=False)
@@ -2749,6 +2776,13 @@ class DomainDeletedAlias(Base, ModelMixin):
         nullable=False,
         default=AliasDeleteReason.Unspecified,
         server_default=str(AliasDeleteReason.Unspecified.value),
+    )
+
+    alias_id = sa.Column(
+        sa.Integer,
+        nullable=True,
+        server_default=None,
+        default=None,
     )
 
     @classmethod
@@ -2923,6 +2957,10 @@ class Mailbox(Base, ModelMixin):
     # a mailbox can be disabled if it can't be reached
     disabled = sa.Column(sa.Boolean, default=False, nullable=False, server_default="0")
 
+    # Bitmask flags for admin-controlled states
+    FLAG_ADMIN_DISABLED = 1 << 0
+    flags = sa.Column(sa.BigInteger(), default=0, server_default="0", nullable=False)
+
     generic_subject = sa.Column(sa.String(78), nullable=True)
 
     __table_args__ = (
@@ -2944,6 +2982,17 @@ class Mailbox(Base, ModelMixin):
             return True
 
         return False
+
+    def is_admin_disabled(self) -> bool:
+        """Check if mailbox has been disabled by admin."""
+        return self.flags & Mailbox.FLAG_ADMIN_DISABLED == Mailbox.FLAG_ADMIN_DISABLED
+
+    def can_send_or_receive(self):
+        if self.is_admin_disabled():
+            return False
+        if self.disabled:
+            return False
+        return self.user.can_send_or_receive()
 
     def nb_alias(self):
         from app.mailbox_utils import count_mailbox_aliases
@@ -2982,10 +3031,17 @@ class Mailbox(Base, ModelMixin):
                 alias.mailbox_id = first_mb.id
                 alias._mailboxes.remove(first_mb)
             else:
-                from app.alias_delete import perform_alias_deletion
+                from app.alias_delete import perform_alias_deletion, move_alias_to_trash
+                # If the user setting is DeleteImmediately, perform alias deletion
+                # Otherwise, if the user setting is MoveToTrash, assign the default mailbox and move them to trash
 
-                # only put aliases that have mailbox as a single mailbox into trash
-                perform_alias_deletion(alias, user, AliasDeleteReason.MailboxDeleted)
+                if user.alias_delete_action == UserAliasDeleteAction.DeleteImmediately:
+                    perform_alias_deletion(
+                        alias, user, AliasDeleteReason.MailboxDeleted
+                    )
+                else:
+                    alias.mailbox_id = user.default_mailbox_id
+                    move_alias_to_trash(alias, user, AliasDeleteReason.MailboxDeleted)
             Session.commit()
 
         cls.filter(cls.id == obj_id).delete()
@@ -3312,6 +3368,9 @@ class Partner(Base, ModelMixin):
             return partner
         return None
 
+    def to_partner_data(self) -> PartnerData:
+        return PartnerData(id=self.id, name=self.name, contact_email=self.contact_email)
+
 
 class SLDomain(Base, ModelMixin):
     """SimpleLogin domains"""
@@ -3611,6 +3670,15 @@ class InvalidMailboxDomain(Base, ModelMixin):
     domain = sa.Column(sa.String(256), unique=True, nullable=False)
 
 
+class ForbiddenMxIp(Base, ModelMixin):
+    """MX IPs that we don't allow to create mailboxes for"""
+
+    __tablename__ = "forbidden_mx_ip"
+
+    ip = sa.Column(sa.String(16), unique=True, nullable=False)
+    comment = sa.Column(sa.Text, unique=False, nullable=True)
+
+
 # region Phone
 class PhoneCountry(Base, ModelMixin):
     __tablename__ = "phone_country"
@@ -3800,6 +3868,40 @@ class AdminAuditLog(Base):
             model="User",
             model_id=user_id,
             data={},
+        )
+
+    @classmethod
+    def clear_delete_on(cls, admin_user_id: int, user_id: int):
+        cls.create(
+            admin_user_id=admin_user_id,
+            action=AuditLogActionEnum.clear_delete_on.value,
+            model="User",
+            model_id=user_id,
+            data={},
+        )
+
+    @classmethod
+    def update_subdomain_quota(
+        cls, admin_user_id: int, user_id: int, old_quota: int, new_quota: int
+    ):
+        cls.create(
+            admin_user_id=admin_user_id,
+            action=AuditLogActionEnum.update_subdomain_quota.value,
+            model="User",
+            model_id=user_id,
+            data={"old_quota": old_quota, "new_quota": new_quota},
+        )
+
+    @classmethod
+    def update_directory_quota(
+        cls, admin_user_id: int, user_id: int, old_quota: int, new_quota: int
+    ):
+        cls.create(
+            admin_user_id=admin_user_id,
+            action=AuditLogActionEnum.update_directory_quota.value,
+            model="User",
+            model_id=user_id,
+            data={"old_quota": old_quota, "new_quota": new_quota},
         )
 
 

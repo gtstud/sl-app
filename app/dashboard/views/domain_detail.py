@@ -157,7 +157,7 @@ def domain_detail_dns(custom_domain_id):
 def domain_detail(custom_domain_id):
     csrf_form = CSRFValidationForm()
     custom_domain: CustomDomain = CustomDomain.get(custom_domain_id)
-    mailboxes = current_user.mailboxes()
+    mailboxes = [mb for mb in current_user.mailboxes() if not mb.is_admin_disabled()]
 
     if not custom_domain or custom_domain.user_id != current_user.id:
         flash("You cannot see this page", "warning")
@@ -345,6 +345,10 @@ class AutoCreateRuleForm(FlaskForm):
         "regex", validators=[validators.DataRequired(), validators.Length(max=128)]
     )
 
+    display_name = StringField(
+        "display name", validators=[validators.Optional(), validators.Length(max=128)]
+    )
+
     order = IntegerField(
         "order",
         validators=[validators.DataRequired(), validators.NumberRange(min=0, max=100)],
@@ -363,7 +367,7 @@ class AutoCreateTestForm(FlaskForm):
 @login_required
 def domain_detail_auto_create(custom_domain_id):
     custom_domain: CustomDomain = CustomDomain.get(custom_domain_id)
-    mailboxes = current_user.mailboxes()
+    mailboxes = [mb for mb in current_user.mailboxes() if not mb.is_admin_disabled()]
     new_auto_create_rule_form = AutoCreateRuleForm()
 
     auto_create_test_form = AutoCreateTestForm()
@@ -408,6 +412,17 @@ def domain_detail_auto_create(custom_domain_id):
                                     custom_domain_id=custom_domain.id,
                                 )
                             )
+                        if mailbox.is_admin_disabled():
+                            flash(
+                                "Cannot assign admin-disabled mailbox. Please contact support.",
+                                "error",
+                            )
+                            return redirect(
+                                url_for(
+                                    "dashboard.domain_detail_auto_create",
+                                    custom_domain_id=custom_domain.id,
+                                )
+                            )
                         mailboxes.append(mailbox)
 
                     if not mailboxes:
@@ -433,10 +448,18 @@ def domain_detail_auto_create(custom_domain_id):
                             )
                         )
 
+                    display_name = None
+                    if new_auto_create_rule_form.display_name.data:
+                        raw_display = new_auto_create_rule_form.display_name.data
+                        display_name = (
+                            raw_display.replace("\r", " ").replace("\n", " ").strip()
+                        )
+
                     rule = AutoCreateRule.create(
                         custom_domain_id=custom_domain.id,
                         order=int(new_auto_create_rule_form.order.data),
                         regex=new_auto_create_rule_form.regex.data,
+                        display_name=display_name or None,
                         flush=True,
                     )
 

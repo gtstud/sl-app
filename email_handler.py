@@ -33,7 +33,6 @@ It should contain the following info:
 
 import argparse
 import email
-import time
 import uuid
 import logging
 from email import encoders
@@ -44,15 +43,17 @@ from email.mime.multipart import MIMEMultipart
 from email.utils import make_msgid, formatdate, getaddresses
 from io import BytesIO
 from smtplib import SMTPRecipientsRefused, SMTPServerDisconnected
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Set
 
 import newrelic.agent
 import sentry_sdk
+import time
 from aiosmtpd.controller import Controller
 from aiosmtpd.smtp import Envelope
 from email_validator import validate_email, EmailNotValidError
 from flanker.addresslib import address
 from flanker.addresslib.address import EmailAddress
+from sl_pgp import PgpContext
 from sqlalchemy.exc import IntegrityError
 
 from app import pgp_utils, s3, config, contact_utils
@@ -116,6 +117,7 @@ from app.email_utils import (
     generate_reply_email,
     is_reverse_alias,
     replace,
+    remove_sender_pgp_key_attachment,
     should_disable,
     parse_id_from_bounce,
     spf_pass,
@@ -154,7 +156,10 @@ from app.handler.unsubscribe_generator import UnsubscribeGenerator
 from app.handler.unsubscribe_handler import UnsubscribeHandler
 from app.log import LOG, set_message_id
 from app.mail_sender import sl_sendmail
-from app.mailbox_utils import get_mailbox_for_reply_phase
+from app.mailbox_utils import (
+    get_mailbox_for_reply_phase,
+    quarantine_disabled_mailbox_email,
+)
 from app.message_utils import message_to_bytes
 from app.models import (
     Alias,
@@ -178,6 +183,7 @@ from app.pgp_utils import (
     sign_data_with_pgpy,
     sign_data,
     load_public_key_and_check,
+    create_pgp_context,
 )
 from app.utils import sanitize_email
 from init_app import load_pgp_public_keys
@@ -404,9 +410,17 @@ def replace_header_when_reply(msg: Message, alias: Alias, header: str):
 
 @sentry_sdk.trace
 def prepare_pgp_message(
-    orig_msg: Message, pgp_fingerprint: str, public_key: str, can_sign: bool = False
+    orig_msg: Message,
+    pgp_fingerprint: str,
+    public_key: str,
+    can_sign: bool = False,
+    ctx: "PgpContext | None" = None,
 ) -> Message:
     msg = MIMEMultipart("encrypted", protocol="application/pgp-encrypted")
+
+    # Create a PgpContext for this operation if not provided
+    if ctx is None:
+        ctx = create_pgp_context()
 
     # clone orig message to avoid modifying it
     clone_msg = copy(orig_msg)
@@ -439,7 +453,7 @@ def prepare_pgp_message(
 
     if can_sign and PGP_SENDER_PRIVATE_KEY:
         LOG.d("Sign msg")
-        clone_msg = sign_msg(clone_msg)
+        clone_msg = sign_msg(clone_msg, ctx)
 
     # use pgpy as fallback
     second = MIMEApplication(
@@ -451,16 +465,18 @@ def prepare_pgp_message(
     # use pgpy as fallback
     msg_bytes = message_to_bytes(clone_msg)
     try:
-        encrypted_data = pgp_utils.encrypt_file(BytesIO(msg_bytes), pgp_fingerprint)
+        encrypted_data = pgp_utils.encrypt_file(
+            BytesIO(msg_bytes), pgp_fingerprint, ctx
+        )
         second.set_payload(encrypted_data)
     except PGPException:
         LOG.w(
             "Cannot encrypt using python-gnupg, check if public key is valid and try with pgpy"
         )
         # check if the public key is valid
-        load_public_key_and_check(public_key)
+        load_public_key_and_check(public_key, ctx)
 
-        encrypted = pgp_utils.encrypt_file_with_pgpy(msg_bytes, public_key)
+        encrypted = pgp_utils.encrypt_file_with_pgpy(msg_bytes, public_key, ctx)
         second.set_payload(str(encrypted))
         LOG.i(
             f"encryption works with pgpy and not with python-gnupg, public key {public_key}"
@@ -472,7 +488,7 @@ def prepare_pgp_message(
 
 
 @sentry_sdk.trace
-def sign_msg(msg: Message) -> Message:
+def sign_msg(msg: Message, ctx: PgpContext) -> Message:
     container = MIMEMultipart(
         "signed", protocol="application/pgp-signature", micalg="pgp-sha256"
     )
@@ -484,7 +500,7 @@ def sign_msg(msg: Message) -> Message:
     signature.add_header("Content-Disposition", 'attachment; filename="signature.asc"')
 
     try:
-        payload = sign_data(message_to_bytes(msg).replace(b"\n", b"\r\n"))
+        payload = sign_data(message_to_bytes(msg).replace(b"\n", b"\r\n"), ctx)
 
         if not payload:
             raise PGPException("Empty signature by gnupg")
@@ -744,15 +760,20 @@ def forward_email_to_mailbox(
     mailbox,
     user,
     reply_to_contacts: list[Contact],
-) -> (bool, str):
-    LOG.d("Forward %s -> %s -> %s", contact, alias, mailbox)
+) -> Tuple[bool, str]:
+    LOG.debug(f"Forward {contact} -> {alias} -> {mailbox} ({mailbox.user})")
 
     if mailbox.disabled:
-        LOG.d("%s disabled, do not forward")
+        LOG.d(f"{mailbox} disabled, do not forward")
         if should_ignore_bounce(envelope.mail_from):
             return True, status.E207
         else:
             return False, status.E518
+
+    if mailbox.is_admin_disabled():
+        LOG.d(f"{mailbox} admin_disabled, do not forward")
+        quarantine_disabled_mailbox_email(alias, contact, mailbox, envelope, msg)
+        return True, status.E207
 
     # sanity check: make sure mailbox is not actually an alias
     if get_email_domain_part(alias.email) == get_email_domain_part(mailbox.email):
@@ -1031,7 +1052,12 @@ def replace_sl_message_id_by_original_message_id(msg):
 
 
 @sentry_sdk.trace
-def handle_reply(envelope, msg: Message, rcpt_to: str) -> (bool, str):
+def handle_reply(
+    envelope,
+    msg: Message,
+    rcpt_to: str,
+    notified_mailboxes: Set[int],
+) -> (bool, str):
     """
     Return whether an email has been delivered and
     the smtp status ("250 Message accepted", "550 Non-existent email address", etc)
@@ -1060,6 +1086,11 @@ def handle_reply(envelope, msg: Message, rcpt_to: str) -> (bool, str):
         return False, status.E502
 
     alias = contact.alias
+
+    if alias.is_trashed():
+        LOG.d("%s is trashed, do not forward", alias)
+        return False, status.E502
+
     alias_address: str = contact.alias.email
     alias_domain = get_email_domain_part(alias_address)
 
@@ -1101,6 +1132,10 @@ def handle_reply(envelope, msg: Message, rcpt_to: str) -> (bool, str):
             handle_unknown_mailbox(envelope, msg, reply_email, user, alias, contact)
             # return 2** to avoid Postfix sending out bounces and avoid backscatter issue
             return False, status.E214
+
+    if mailbox.is_admin_disabled():
+        LOG.i(f"User {user} tried to send a mail from admin disabled mailbox {mailbox}")
+        return False, status.E207
 
     if ENFORCE_SPF and mailbox.force_spf and not alias.disable_email_spoofing_check:
         if not spf_pass(envelope, mailbox, user, alias, contact.website_email, msg):
@@ -1180,6 +1215,10 @@ def handle_reply(envelope, msg: Message, rcpt_to: str) -> (bool, str):
         + headers.MIME_HEADERS,
     )
 
+    # Remove PGP public key attachments that could leak the user's real email address
+    if config.DROP_PGP_KEY_ATTACHMENTS_ON_REPLY:
+        msg = remove_sender_pgp_key_attachment(msg)
+
     orig_to = msg[headers.TO]
     orig_cc = msg[headers.CC]
 
@@ -1254,17 +1293,18 @@ def handle_reply(envelope, msg: Message, rcpt_to: str) -> (bool, str):
         # the email is ignored, delete the email log
         EmailLog.delete(email_log.id, commit=True)
 
-        send_email(
-            mailbox.email,
-            f"Email sent to {contact.email} contains non reverse-alias addresses",
-            render(
-                "transactional/non-reverse-alias-reply-phase.txt.jinja2",
-                user=alias.user,
-                destination=contact.email,
-                alias=alias.email,
-                subject=msg[headers.SUBJECT],
-            ),
-        )
+        if mailbox.can_send_or_receive():
+            send_email(
+                mailbox.email,
+                f"Email sent to {contact.email} contains non reverse-alias addresses",
+                render(
+                    "transactional/non-reverse-alias-reply-phase.txt.jinja2",
+                    user=alias.user,
+                    destination=contact.email,
+                    alias=alias.email,
+                    subject=msg[headers.SUBJECT],
+                ),
+            )
         # user is informed and will retry
         return True, status.E200
 
@@ -1300,31 +1340,38 @@ def handle_reply(envelope, msg: Message, rcpt_to: str) -> (bool, str):
         )
 
         # if alias belongs to several mailboxes, notify other mailboxes about this email
+        # Skip mailboxes that have already been notified in this transaction
+        # to prevent duplicate notifications when sending to multiple reverse aliases
         other_mailboxes = [mb for mb in alias.mailboxes if mb.email != mailbox.email]
         for mb in other_mailboxes:
+            if mb.id in notified_mailboxes:
+                LOG.d(f"Skipping notification to {mb.email}, already notified")
+                continue
             notify_mailbox(alias, mailbox, mb, msg, orig_to, orig_cc, alias_domain)
+            notified_mailboxes.add(mb.id)
 
     except Exception:
         LOG.w("Cannot send email from %s to %s", alias, contact)
         EmailLog.delete(email_log.id, commit=True)
-        send_email(
-            mailbox.email,
-            f"Email cannot be sent to {contact.email} from {alias.email}",
-            render(
-                "transactional/reply-error.txt.jinja2",
-                user=user,
-                alias=alias,
-                contact=contact,
-                contact_domain=get_email_domain_part(contact.email),
-            ),
-            render(
-                "transactional/reply-error.html",
-                user=user,
-                alias=alias,
-                contact=contact,
-                contact_domain=get_email_domain_part(contact.email),
-            ),
-        )
+        if mailbox.can_send_or_receive():
+            send_email(
+                mailbox.email,
+                f"Email cannot be sent to {contact.email} from {alias.email}",
+                render(
+                    "transactional/reply-error.txt.jinja2",
+                    user=user,
+                    alias=alias,
+                    contact=contact,
+                    contact_domain=get_email_domain_part(contact.email),
+                ),
+                render(
+                    "transactional/reply-error.html",
+                    user=user,
+                    alias=alias,
+                    contact=contact,
+                    contact_domain=get_email_domain_part(contact.email),
+                ),
+            )
 
     # return 250 even if error as user is already informed of the incident and can retry sending the email
     return True, status.E200
@@ -1873,9 +1920,8 @@ def handle_transactional_bounce(
 ):
     LOG.d("handle transactional bounce sent to %s", rcpt_to)
     if transactional_id is None:
-        LOG.i(
-            f"No transactional record for {envelope.mail_from} -> {envelope.rcpt_tos}"
-        )
+        LOG.i(f"No transactional id for {envelope.mail_from} -> {envelope.rcpt_tos}")
+        save_envelope_for_debugging(envelope, "no-txid")
         return
 
     transactional = TransactionalEmail.get(transactional_id)
@@ -1884,7 +1930,9 @@ def handle_transactional_bounce(
         LOG.i(
             f"No transactional record for {envelope.mail_from} -> {envelope.rcpt_tos}"
         )
+        save_envelope_for_debugging(envelope, "no-tx")
         return
+
     LOG.i("Create bounce for %s", transactional.email)
     bounce_info = get_mailbox_bounce_info(msg)
     if bounce_info:
@@ -2228,6 +2276,10 @@ def handle(envelope: Envelope, msg: Message) -> str:
     # each element is a couple of whether the delivery is successful and the smtp status
     res: [(bool, str)] = []
 
+    # Track mailboxes that have been notified to prevent duplicate notifications
+    # when sending to multiple reverse aliases in the same transaction
+    notified_mailboxes: Set[int] = set()
+
     nb_rcpt_tos = len(rcpt_tos)
     for rcpt_index, rcpt_to in enumerate(rcpt_tos):
         if rcpt_to in config.NOREPLIES:
@@ -2248,7 +2300,9 @@ def handle(envelope: Envelope, msg: Message) -> str:
             LOG.d(
                 "Reply phase %s(%s) -> %s", mail_from, copy_msg[headers.FROM], rcpt_to
             )
-            is_delivered, smtp_status = handle_reply(envelope, copy_msg, rcpt_to)
+            is_delivered, smtp_status = handle_reply(
+                envelope, copy_msg, rcpt_to, notified_mailboxes
+            )
             res.append((is_delivered, smtp_status))
         else:  # Forward case
             LOG.d(
@@ -2436,7 +2490,12 @@ class MailHandler:
 
 def main(port: int):
     """Use aiosmtpd Controller"""
-    controller = Controller(MailHandler(), hostname="0.0.0.0", port=port)
+    controller = Controller(
+        MailHandler(),
+        hostname="0.0.0.0",
+        port=port,
+        data_size_limit=config.SMTP_SIZE_LIMIT,
+    )
 
     controller.start()
     LOG.d("Start mail controller %s %s", controller.hostname, controller.port)

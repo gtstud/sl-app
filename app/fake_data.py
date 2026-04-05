@@ -36,7 +36,7 @@ from app.models import (
     PartnerUser,
     PartnerSubscription,
 )
-from app.pgp_utils import load_public_key
+from app.pgp_utils import load_public_key, create_pgp_context
 from app.proton.proton_partner import get_proton_partner
 
 
@@ -134,7 +134,7 @@ def fake_data():
         verified=True,
         pgp_public_key=pgp_public_key,
     )
-    m1.pgp_finger_print = load_public_key(pgp_public_key)
+    m1.pgp_finger_print = load_public_key(pgp_public_key, ctx=create_pgp_context())
     Session.commit()
 
     # example@example.com is in a LOT of data breaches
@@ -181,11 +181,27 @@ def fake_data():
     custom_domain1 = CustomDomain.create(user_id=user.id, domain="ab.cd", verified=True)
     Session.commit()
 
-    Alias.create(
+    alias = Alias.create(
         user_id=user.id,
         email="first@ab.cd",
         mailbox_id=user.default_mailbox_id,
         custom_domain_id=custom_domain1.id,
+        commit=True,
+    )
+
+    contact = Contact.create(
+        user_id=user.id,
+        alias_id=alias.id,
+        website_email="firstcontact@sl.lan",
+        reply_email="nobody@nowhere.net",
+        commit=True,
+    )
+    EmailLog.create(
+        user_id=user.id,
+        contact_id=contact.id,
+        alias_id=contact.alias_id,
+        refused_email_id=None,
+        bounced=False,
         commit=True,
     )
 

@@ -1,5 +1,4 @@
 import os
-import time
 from datetime import timedelta
 
 import arrow
@@ -8,6 +7,7 @@ import flask_limiter
 import flask_profiler
 import newrelic.agent
 import sentry_sdk
+import time
 from flask import (
     Flask,
     redirect,
@@ -19,7 +19,6 @@ from flask import (
     session,
     g,
 )
-from flask_admin import Admin
 from flask_cors import cross_origin, CORS
 from flask_login import current_user
 from sentry_sdk.integrations.flask import FlaskIntegration
@@ -27,25 +26,7 @@ from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from app import config, constants
-from app.admin_model import (
-    SLAdminIndexView,
-    UserAdmin,
-    AliasAdmin,
-    MailboxAdmin,
-    ManualSubscriptionAdmin,
-    CouponAdmin,
-    CustomDomainAdmin,
-    AdminAuditLogAdmin,
-    ProviderComplaintAdmin,
-    NewsletterAdmin,
-    NewsletterUserAdmin,
-    DailyMetricAdmin,
-    MetricAdmin,
-    InvalidMailboxDomainAdmin,
-    EmailSearchAdmin,
-    CustomDomainSearchAdmin,
-    AbuserLookupAdmin,
-)
+from app.admin import init_admin
 from app.api.base import api_bp
 from app.auth.base import auth_bp
 from app.build_info import SHA1
@@ -85,27 +66,16 @@ from app.jose_utils import get_jwk_key
 from app.log import LOG
 from app.models import (
     User,
-    Alias,
-    CustomDomain,
-    Mailbox,
     EmailLog,
     Contact,
-    ManualSubscription,
-    Coupon,
-    AdminAuditLog,
-    ProviderComplaint,
     Newsletter,
     NewsletterUser,
-    DailyMetric,
-    Metric2,
-    InvalidMailboxDomain,
 )
 from app.monitor.base import monitor_bp
 from app.monitor_utils import send_version_event
 from app.newsletter_utils import send_newsletter_to_user
 from app.oauth.base import oauth_bp
 from app.onboarding.base import onboarding_bp
-from app.payments.coinbase import setup_coinbase_commerce
 from app.payments.paddle import setup_paddle_callback
 from app.phone.base import phone_bp
 from app.redis_services import initialize_redis_services
@@ -183,7 +153,6 @@ def create_app() -> Flask:
 
     init_admin(app)
     setup_paddle_callback(app)
-    setup_coinbase_commerce(app)
     setup_do_not_track(app)
     register_custom_commands(app)
 
@@ -449,34 +418,6 @@ def init_extensions(app: Flask):
     login_manager.init_app(app)
 
 
-def init_admin(app):
-    admin = Admin(name="SimpleLogin", template_mode="bootstrap4")
-
-    admin.init_app(app, index_view=SLAdminIndexView())
-    admin.add_view(EmailSearchAdmin(name="Email Search", endpoint="admin.email_search"))
-    admin.add_view(
-        CustomDomainSearchAdmin(
-            name="Custom domain search", endpoint="admin.custom_domain_search"
-        )
-    )
-    admin.add_view(
-        AbuserLookupAdmin(name="Abuser Lookup", endpoint="admin.abuser_lookup")
-    )
-    admin.add_view(UserAdmin(User, Session))
-    admin.add_view(AliasAdmin(Alias, Session))
-    admin.add_view(MailboxAdmin(Mailbox, Session))
-    admin.add_view(CouponAdmin(Coupon, Session))
-    admin.add_view(ManualSubscriptionAdmin(ManualSubscription, Session))
-    admin.add_view(CustomDomainAdmin(CustomDomain, Session))
-    admin.add_view(AdminAuditLogAdmin(AdminAuditLog, Session))
-    admin.add_view(ProviderComplaintAdmin(ProviderComplaint, Session))
-    admin.add_view(NewsletterAdmin(Newsletter, Session))
-    admin.add_view(NewsletterUserAdmin(NewsletterUser, Session))
-    admin.add_view(DailyMetricAdmin(DailyMetric, Session))
-    admin.add_view(MetricAdmin(Metric2, Session))
-    admin.add_view(InvalidMailboxDomainAdmin(InvalidMailboxDomain, Session))
-
-
 def register_custom_commands(app):
     """
     Adhoc commands run during data migration.
@@ -509,7 +450,9 @@ def register_custom_commands(app):
     @app.cli.command("dummy-data")
     def dummy_data():
         from init_app import add_sl_domains, add_proton_partner
+        from app.rate_limiter import set_rate_limit_enabled
 
+        set_rate_limit_enabled(False)
         LOG.w("reset db, add fake data")
         add_proton_partner()
         fake_data()

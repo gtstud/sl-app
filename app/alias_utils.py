@@ -279,9 +279,12 @@ def try_auto_create_via_domain(address: str) -> Optional[Alias]:
         return None
     custom_domain, rule = can_create
 
+    alias_name = None
     if rule:
         alias_note = f"Created by rule {rule.order} with regex {rule.regex}"
         mailboxes = rule.mailboxes
+        if rule.display_name:
+            alias_name = rule.display_name
     else:
         alias_note = "Created by catchall option"
         mailboxes = custom_domain.mailboxes
@@ -308,6 +311,8 @@ def try_auto_create_via_domain(address: str) -> Optional[Alias]:
         LOG.d(
             f"User {custom_domain.user} created alias {alias} via domain {custom_domain}"
         )
+        if alias_name:
+            alias.name = alias_name
         if not custom_domain.user.disable_automatic_alias_note:
             alias.note = alias_note
         Session.flush()
@@ -442,20 +447,21 @@ def transfer_alias(alias: Alias, new_user: User, new_mailboxes: [Mailbox]):
 
     # inform previous owner
     old_user = alias.user
-    send_email(
-        old_user.email,
-        f"Alias {alias.email} has been received",
-        render(
-            "transactional/alias-transferred.txt",
-            user=old_user,
-            alias=alias,
-        ),
-        render(
-            "transactional/alias-transferred.html",
-            user=old_user,
-            alias=alias,
-        ),
-    )
+    if alias.user.can_send_or_receive():
+        send_email(
+            old_user.email,
+            f"Alias {alias.email} has been received",
+            render(
+                "transactional/alias-transferred.txt",
+                user=old_user,
+                alias=alias,
+            ),
+            render(
+                "transactional/alias-transferred.html",
+                user=old_user,
+                alias=alias,
+            ),
+        )
 
     # now the alias belongs to the new user
     alias.user_id = new_user.id
@@ -530,17 +536,13 @@ def change_alias_note(alias: Alias, note: str, commit: bool = False):
     LOG.i(f"Changing alias {alias} note.")
 
     alias.note = note
-    # TODO: acasajus Enable back after July 1st 2025
-    if False:
-        event = AliasNoteChanged(
-            id=alias.id,
-            email=alias.email,
-            note=note,
-        )
+    event = AliasNoteChanged(
+        id=alias.id,
+        email=alias.email,
+        note=note,
+    )
 
-        EventDispatcher.send_event(alias.user, EventContent(alias_note_changed=event))
-    else:
-        LOG.i("Skipping sending event for now")
+    EventDispatcher.send_event(alias.user, EventContent(alias_note_changed=event))
 
     if commit:
         Session.commit()
