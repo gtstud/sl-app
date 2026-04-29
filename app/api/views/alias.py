@@ -489,3 +489,31 @@ def toggle_contact(contact_id):
     contact_toggle_block(contact)
 
     return jsonify(block_forward=contact.block_forward), 200
+
+@api_bp.route("/contacts/<int:contact_id>/toggle_regex", methods=["POST"])
+@require_api_auth
+def toggle_contact_regex(contact_id):
+    """
+    Toggle whether the contact's domain is in the alias's sender_allow_regex.
+    """
+    user = g.user
+    contact: Optional[Contact] = Contact.get(contact_id)
+
+    if not contact or contact.alias.user_id != user.id:
+        return jsonify(error="Forbidden"), 403
+
+    alias = contact.alias
+    domain = contact.website_email.split('@')[-1]
+    
+    domains = alias.get_sender_allow_domains()
+    if domain in domains:
+        domains.remove(domain)
+        in_regex = False
+    else:
+        domains.add(domain)
+        in_regex = True
+        
+    alias.set_sender_allow_domains(domains)
+    Session.commit()
+    
+    return jsonify(in_regex=in_regex), 200

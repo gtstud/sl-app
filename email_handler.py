@@ -33,6 +33,7 @@ It should contain the following info:
 
 import argparse
 import email
+import re2 as re
 import uuid
 import logging
 from email import encoders
@@ -193,7 +194,7 @@ from server import create_light_app
 @sentry_sdk.trace
 def get_or_create_contact(
     from_header: str, mail_from: str, alias: Alias
-) -> Optional[Contact]:
+) -> Tuple[Optional[Contact], bool]:
     """
     contact_from_header is the RFC 2047 format FROM header
     """
@@ -226,7 +227,7 @@ def get_or_create_contact(
     )
     if contact_result.error:
         LOG.w(f"Error creating contact: {contact_result.error.value}")
-    return contact_result.contact
+    return contact_result.contact, contact_result.created
 
 
 @sentry_sdk.trace
@@ -616,7 +617,7 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
 
     from_header = get_header_unicode(msg[headers.FROM])
     LOG.d("Create or get contact for from_header:%s", from_header)
-    contact = get_or_create_contact(from_header, envelope.mail_from, alias)
+    contact, contact_created = get_or_create_contact(from_header, envelope.mail_from, alias)
     if not contact:
         return [(False, status.E504)]
     alias = (
@@ -659,6 +660,15 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
             commit=True,
         )
         return [(True, status.E502)]
+
+    regex_mismatch = False
+    if alias.sender_allow_regex:
+        try:
+            if not re.search(alias.sender_allow_regex, envelope.mail_from, re.IGNORECASE):
+                regex_mismatch = True
+                LOG.d("Sender %s does not match alias %s regex %s, regex mismatch", envelope.mail_from, alias, alias.sender_allow_regex)
+        except re.error as e:
+            LOG.w("Invalid regex %s for alias %s: %s", alias.sender_allow_regex, alias, e)
 
     if not alias.enabled or alias.is_trashed() or contact.block_forward:
         if not alias.enabled:
@@ -744,7 +754,7 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
             # create a copy of message for each forward
             ret.append(
                 forward_email_to_mailbox(
-                    alias, copy(msg), contact, envelope, mailbox, user, reply_to_contact
+                    alias, copy(msg), contact, envelope, mailbox, user, reply_to_contact, regex_mismatch, contact_created
                 )
             )
 
@@ -760,6 +770,8 @@ def forward_email_to_mailbox(
     mailbox,
     user,
     reply_to_contacts: list[Contact],
+    regex_mismatch: bool = False,
+    contact_created: bool = False,
 ) -> Tuple[bool, str]:
     LOG.debug(f"Forward {contact} -> {alias} -> {mailbox} ({mailbox.user})")
 
@@ -903,6 +915,13 @@ def forward_email_to_mailbox(
             f"""Forwarded by SimpleLogin to {alias.email} from "{sender}" with "{orig_subject}" as subject""",
             f"""Forwarded by SimpleLogin to {alias.email} from "{sender}" with <b>{orig_subject}</b> as subject""",
         )
+
+    if regex_mismatch:
+        prefix = "⚠️⚠️ " if contact_created else "⚠️ "
+        current_subject = msg[headers.SUBJECT]
+        current_subject = get_header_unicode(current_subject) or ""
+        add_or_replace_header(msg, "Subject", prefix + current_subject)
+        LOG.d("Regex mismatch: prepended to subject for %s -> %s", contact.website_email, alias)
 
     # create PGP email if needed
     if mailbox.pgp_enabled() and user.is_premium() and not alias.disable_pgp:

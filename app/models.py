@@ -1610,6 +1610,9 @@ class Alias(Base, ModelMixin):
     # the name to use when user replies/sends from alias
     name = sa.Column(sa.String(128), nullable=True, default=None)
 
+    # optional regex pattern that must match the sender email. if not matching, email is dropped
+    sender_allow_regex = sa.Column(sa.String(512), nullable=True, default=None)
+
     enabled = sa.Column(sa.Boolean(), default=True, nullable=False)
     flags = sa.Column(
         sa.BigInteger(), default=0, server_default="0", nullable=False, index=True
@@ -1932,6 +1935,33 @@ class Alias(Base, ModelMixin):
     def __repr__(self):
         return f"<Alias {self.id} {self.email}>"
 
+    def get_sender_allow_domains(self) -> set:
+        if not self.sender_allow_regex:
+            return set()
+        s = self.sender_allow_regex
+        if s.startswith(".*@"):
+            s = s[3:]
+        if s.endswith("$"):
+            s = s[:-1]
+        if s.startswith("(") and s.endswith(")"):
+            s = s[1:-1]
+        
+        domains = s.split("|")
+        return {d.replace(r"\.", ".") for d in domains if d}
+
+    def set_sender_allow_domains(self, domains: set):
+        if not domains:
+            self.sender_allow_regex = None
+            return
+        
+        # Normalise to lowercase — domain names are case-insensitive by spec
+        escaped_domains = [d.lower().replace(".", r"\.") for d in domains]
+        if len(escaped_domains) == 1:
+            self.sender_allow_regex = f".*@{escaped_domains[0]}$"
+        else:
+            joined = "|".join(escaped_domains)
+            self.sender_allow_regex = f".*@({joined})$"
+
 
 class ClientUser(Base, ModelMixin):
     __tablename__ = "client_user"
@@ -2100,6 +2130,11 @@ class Contact(Base, ModelMixin):
     @property
     def email(self):
         return self.website_email
+
+    @property
+    def domain_in_allow_regex(self) -> bool:
+        domain = self.website_email.split('@')[-1]
+        return domain in self.alias.get_sender_allow_domains()
 
     @classmethod
     def create(cls, **kw):
