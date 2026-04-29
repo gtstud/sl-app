@@ -33,6 +33,7 @@ It should contain the following info:
 
 import argparse
 import email
+import re2 as re
 import uuid
 import logging
 from email import encoders
@@ -193,7 +194,7 @@ from server import create_light_app
 @sentry_sdk.trace
 def get_or_create_contact(
     from_header: str, mail_from: str, alias: Alias
-) -> Optional[Contact]:
+) -> Tuple[Optional[Contact], bool]:
     """
     contact_from_header is the RFC 2047 format FROM header
     """
@@ -226,7 +227,7 @@ def get_or_create_contact(
     )
     if contact_result.error:
         LOG.w(f"Error creating contact: {contact_result.error.value}")
-    return contact_result.contact
+    return contact_result.contact, contact_result.created
 
 
 @sentry_sdk.trace
@@ -616,7 +617,7 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
 
     from_header = get_header_unicode(msg[headers.FROM])
     LOG.d("Create or get contact for from_header:%s", from_header)
-    contact = get_or_create_contact(from_header, envelope.mail_from, alias)
+    contact, contact_created = get_or_create_contact(from_header, envelope.mail_from, alias)
     if not contact:
         return [(False, status.E504)]
     alias = (
@@ -659,6 +660,11 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
             commit=True,
         )
         return [(True, status.E502)]
+
+    regex_mismatch = False
+    if not alias.is_sender_allowed(envelope.mail_from):
+        regex_mismatch = True
+        LOG.d("Sender %s is not in allow list for alias %s", envelope.mail_from, alias)
 
     if not alias.enabled or alias.is_trashed() or contact.block_forward:
         if not alias.enabled:
@@ -744,7 +750,7 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
             # create a copy of message for each forward
             ret.append(
                 forward_email_to_mailbox(
-                    alias, copy(msg), contact, envelope, mailbox, user, reply_to_contact
+                    alias, copy(msg), contact, envelope, mailbox, user, reply_to_contact, regex_mismatch, contact_created
                 )
             )
 
@@ -760,6 +766,8 @@ def forward_email_to_mailbox(
     mailbox,
     user,
     reply_to_contacts: list[Contact],
+    regex_mismatch: bool = False,
+    contact_created: bool = False,
 ) -> Tuple[bool, str]:
     LOG.debug(f"Forward {contact} -> {alias} -> {mailbox} ({mailbox.user})")
 
@@ -903,6 +911,57 @@ def forward_email_to_mailbox(
             f"""Forwarded by SimpleLogin to {alias.email} from "{sender}" with "{orig_subject}" as subject""",
             f"""Forwarded by SimpleLogin to {alias.email} from "{sender}" with <b>{orig_subject}</b> as subject""",
         )
+
+    if regex_mismatch:
+        now = arrow.now()
+        diff = (now - contact.created_at).total_seconds() / 3600
+        if diff < 24:
+            tag = "⚠️⚠️"
+        elif diff < 192:
+            tag = "⚠️"
+        else:
+            tag = "〰️"
+
+        def insert_tag(text, tag, start_pos=0):
+            text = text or ""
+            insert_pos = len(text)
+            for i in range(min(start_pos, len(text)), len(text)):
+                if not text[i].isalpha():
+                    insert_pos = i
+                    break
+
+            before = text[:insert_pos].rstrip(" ")
+            after = text[insert_pos:].lstrip(" ")
+
+            parts = []
+            if before:
+                parts.append(before)
+            parts.append(tag)
+            if after:
+                parts.append(after)
+
+            return " ".join(parts)
+
+        if user.marker_in_subject:
+            current_subject = msg[headers.SUBJECT]
+            current_subject = get_header_unicode(current_subject) or ""
+            new_subject = insert_tag(current_subject, tag, start_pos=8)
+            add_or_replace_header(msg, "Subject", new_subject)
+            LOG.d("Regex mismatch: inserted into subject for %s -> %s", contact.website_email, alias)
+        else:
+            current_from = msg[headers.FROM]
+            current_from = get_header_unicode(current_from) or ""
+            parsed_from = address.parse(current_from)
+            if parsed_from:
+                display_name = parsed_from.display_name or ""
+                new_display_name = insert_tag(display_name, tag, start_pos=0)
+                # Keep the original email address, update the display name
+                new_from = f'"{new_display_name}" <{parsed_from.address}>'
+                add_or_replace_header(msg, "From", new_from)
+            else:
+                new_from = insert_tag(current_from, tag, start_pos=0)
+                add_or_replace_header(msg, "From", new_from)
+            LOG.d("Regex mismatch: inserted into From for %s -> %s", contact.website_email, alias)
 
     # create PGP email if needed
     if mailbox.pgp_enabled() and user.is_premium() and not alias.disable_pgp:
@@ -1218,6 +1277,22 @@ def handle_reply(
     # Remove PGP public key attachments that could leak the user's real email address
     if config.DROP_PGP_KEY_ATTACHMENTS_ON_REPLY:
         msg = remove_sender_pgp_key_attachment(msg)
+
+    orig_subject = msg[headers.SUBJECT]
+    if orig_subject:
+        orig_subject_str = get_header_unicode(orig_subject) or ""
+
+        # Scan for emojis up to 10 positions from start_pos=8 of subject
+        # considering "Re:" and similar prefixes
+        for tag in ["⚠️⚠️", "⚠️", "〰️"]:
+            idx = orig_subject_str.find(tag)
+            if idx != -1 and 8 <= idx <= 18:
+                # Remove the tag and any trailing single space if present
+                new_subject_str = orig_subject_str.replace(tag + " ", "", 1)
+                if tag in new_subject_str: # fallback if there was no space
+                     new_subject_str = orig_subject_str.replace(tag, "", 1)
+                add_or_replace_header(msg, "Subject", new_subject_str)
+                break
 
     orig_to = msg[headers.TO]
     orig_cc = msg[headers.CC]

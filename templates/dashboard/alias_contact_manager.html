@@ -113,7 +113,7 @@
         <div class="my-2 p-2 card {% if contact.id == highlight_contact_id %}highlight-row{% endif %}">
           <div class="mb-2 row">
             <div class="col">
-              <span class="font-weight-bold">{{ contact.website_email }}</span>
+              <span class="font-weight-bold">{{ contact.website_email }}</span><span class="regex-label-{{ contact.id }} ml-1">{{ contact.ui_tag }}</span>
               {% if contact.pgp_finger_print %}
 
                 <span class="cursor"
@@ -121,7 +121,7 @@
                       data-original-title="PGP Enabled">🗝</span>
               {% endif %}
             </div>
-            <div class="col text-right">
+            <div class="col text-right d-flex justify-content-end align-items-center">
               <label class="custom-switch cursor" data-toggle="tooltip" {% if contact.block_forward %}
                  title="Unblock sender - start receiving emails from this sender" {% else %} title="Block sender - stop receiving emails from this sender" {% endif %} style="padding-left: 0px">
                 <input type="checkbox" class="enable-disable-contact custom-switch-input" data-contact="{{ contact.id }}" data-contact-email="{{ contact.website_email }}" {{ "checked" if not contact.block_forward else "" }}>
@@ -129,18 +129,28 @@
               </label>
             </div>
           </div>
-          <div>
-            <span>
-              <a href="{{ 'mailto:' + contact.website_send_to() }}"
-                 target="_blank"
-                 data-toggle="tooltip"
-                 title="You can click on this to open your email client. Or use the copy button 👉"
-                 class="font-weight-bold">*************************</a>
-              <span class="clipboard btn btn-sm btn-success copy-btn"
-                    data-toggle="tooltip"
-                    title="Copy the reverse-alias to clipboard"
-                    data-clipboard-text="{{ contact.website_send_to() }}">Copy reverse-alias</span>
-            </span>
+          <div class="row">
+            <div class="col">
+              <span>
+                <a href="{{ 'mailto:' + contact.website_send_to() }}"
+                   target="_blank"
+                   data-toggle="tooltip"
+                   title="You can click on this to open your email client. Or use the copy button 👉"
+                   class="font-weight-bold">*************************</a>
+                <span class="clipboard btn btn-sm btn-success copy-btn"
+                      data-toggle="tooltip"
+                      title="Copy the reverse-alias to clipboard"
+                      data-clipboard-text="{{ contact.website_send_to() }}">Copy reverse-alias</span>
+              </span>
+            </div>
+            <div class="col text-right d-flex justify-content-end align-items-center">
+              {% set is_explicitly_whitelisted = alias.sender_allow_list and contact.registered_domain in alias.sender_allow_list %}
+              <label class="mb-0 mr-2 cursor" for="whitelist-{{ contact.id }}">Whitelisted:</label>
+              <label class="custom-switch cursor mb-0" data-toggle="tooltip" title="{{ 'remove ' + contact.registered_domain + ' from whitelist' if is_explicitly_whitelisted else 'add ' + contact.registered_domain + ' to whitelist' }}" style="padding-left: 0px">
+                <input type="checkbox" class="toggle-contact-regex custom-switch-input" data-contact="{{ contact.id }}" data-contact-domain="{{ contact.registered_domain }}" data-contact-email="{{ contact.website_email }}" data-contact-diff-hours="{{ (arrow.utcnow() - contact.created_at).total_seconds() / 3600 if contact.created_at else 0 }}" id="whitelist-{{ contact.id }}" {{ "checked" if is_explicitly_whitelisted else "" }}>
+                <span class="custom-switch-indicator"></span>
+              </label>
+            </div>
           </div>
           <div class="mb-2 text-muted small-text">
             {% if contact_info.latest_email_log != None %}
@@ -279,5 +289,80 @@
         $(this).prop("checked", oldValue);
       }
     }
+
+    $(".toggle-contact-regex").change(async function () {
+      let contactID = $(this).data("contact");
+      let contactEmail = $(this).data("contact-email");
+      let that = $(this);
+      
+      try {
+        let res = await fetch(`/api/contacts/${contactID}/toggle_allow_list`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+              '{{HEADER_ALLOW_API_COOKIES}}': 'allow'
+          }
+        });
+
+        if (res.ok) {
+          let json = await res.json();
+          let whitelistedDomains = json.whitelisted_domains || [];
+          let isWhitelistEmpty = json.is_whitelist_empty;
+          
+          if (json.in_list) {
+            toastr.success(`${json.registered_domain} is whitelisted`);
+          } else {
+            toastr.success(`${json.registered_domain} is un-whitelisted`);
+          }
+
+          $(".toggle-contact-regex").each(function() {
+            let el = $(this);
+            let cid = el.data("contact");
+            let cdomain = el.data("contact-domain");
+            let diffHours = parseFloat(el.data("contact-diff-hours"));
+            let isWhitelisted = whitelistedDomains.includes(cdomain);
+
+            // Uncheck all if whitelist is empty, otherwise check if domain is in whitelist
+            el.prop("checked", isWhitelisted && !isWhitelistEmpty);
+
+            // Update tooltip
+            let tooltipDiv = el.closest('[data-toggle="tooltip"]');
+            if (isWhitelisted && !isWhitelistEmpty) {
+              tooltipDiv.attr('title', `remove ${cdomain} from whitelist`);
+              tooltipDiv.attr('data-original-title', `remove ${cdomain} from whitelist`);
+            } else {
+              tooltipDiv.attr('title', `add ${cdomain} to whitelist`);
+              tooltipDiv.attr('data-original-title', `add ${cdomain} to whitelist`);
+            }
+            // re-initialize tooltip (if using bootstrap)
+            if (typeof $.fn.tooltip !== 'undefined') {
+              tooltipDiv.tooltip('dispose').tooltip();
+            }
+
+            // Update ui_tag
+            let uiTagSpan = $(`.regex-label-${cid}`);
+            if (isWhitelistEmpty) {
+              uiTagSpan.text("");
+            } else if (isWhitelisted) {
+              uiTagSpan.text("✅");
+            } else {
+              if (diffHours < 24) {
+                uiTagSpan.text("⚠️⚠️");
+              } else if (diffHours < 192) {
+                uiTagSpan.text("⚠️");
+              } else {
+                uiTagSpan.text("〰️");
+              }
+            }
+          });
+        } else {
+          toastr.error("Sorry for the inconvenience! Could you refresh the page & retry please?", "Unknown Error");
+          that.prop("checked", !that.prop("checked"));
+        }
+      } catch (e) {
+        toastr.error("Sorry for the inconvenience! Could you refresh the page & retry please?", "Unknown Error");
+        that.prop("checked", !that.prop("checked"));
+      }
+    });
   </script>
 {% endblock %}

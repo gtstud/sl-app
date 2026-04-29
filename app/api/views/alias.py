@@ -489,3 +489,42 @@ def toggle_contact(contact_id):
     contact_toggle_block(contact)
 
     return jsonify(block_forward=contact.block_forward), 200
+
+@api_bp.route("/contacts/<int:contact_id>/toggle_allow_list", methods=["POST"])
+@require_api_auth
+def toggle_contact_allow_list(contact_id):
+    """
+    Toggle whether the contact's domain is in the alias's sender_allow_list.
+    """
+    user = g.user
+    contact: Optional[Contact] = Contact.get(contact_id)
+
+    if not contact or contact.alias.user_id != user.id:
+        return jsonify(error="Forbidden"), 403
+
+    import tldextract
+    alias = contact.alias
+    domain = contact.website_email.split('@')[-1]
+    ext = tldextract.extract(domain)
+    registered_domain = ext.registered_domain.lower() if ext.registered_domain else ext.domain.lower()
+    
+    domains = alias.get_sender_allow_domains()
+    if registered_domain in domains:
+        domains.remove(registered_domain)
+        in_list = False
+    else:
+        domains.add(registered_domain)
+        in_list = True
+        
+    alias.set_sender_allow_domains(domains)
+    Session.commit()
+    
+    is_whitelist_empty = alias.sender_allow_list is None or len(alias.sender_allow_list) == 0
+    whitelisted_domains = alias.sender_allow_list if alias.sender_allow_list else []
+
+    return jsonify(
+        in_list=in_list,
+        registered_domain=registered_domain,
+        is_whitelist_empty=is_whitelist_empty,
+        whitelisted_domains=whitelisted_domains
+    ), 200
