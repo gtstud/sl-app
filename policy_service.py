@@ -16,6 +16,7 @@ import socket
 import os
 import grp
 import logging
+import re2 as re
 from sqlalchemy.exc import SQLAlchemyError
 
 # Import only what we need from SimpleLogin
@@ -98,20 +99,17 @@ def process_request(client_socket, request_data):
             alias = Alias.get_by(email=recipient)
 
             if alias:
-
-
-
-
-
-
-
-
-
-
-
+                regex_mismatch = False
+                if alias.sender_regex:
+                    try:
+                        if not re.search(alias.sender_regex, sender, re.IGNORECASE):
+                            regex_mismatch = True
+                            LOG.d(f"Sender {sender} does not match alias {alias.email} regex {alias.sender_regex}, treating as disabled")
+                    except re.error as e:
+                        LOG.w(f"Invalid regex {alias.sender_regex} for alias {alias.email}: {e}")
 
                 # Check if alias is enabled and user is active
-                if not alias.enabled:
+                if not alias.enabled or regex_mismatch:
                     # Get the user associated with this alias
                     user = User.get(alias.user_id)
                     elapsed = time.time() - start
@@ -124,14 +122,6 @@ def process_request(client_socket, request_data):
                         LOG.w(f"Policy REJECT: disabled alias from={sender} to={recipient} time={elapsed:.3f}s")
                         client_socket.sendall(b"action=REJECT Recipient address disabled\n\n")
                     return
-
-
-
-#                if not alias.enabled:
-#                    elapsed = time.time() - start
-#                    LOG.w(f"Policy REJECT: disabled alias from={sender} to={recipient} time={elapsed:.3f}s")
-#                    client_socket.sendall(b"action=REJECT Recipient address disabled\n\n")
-#                    return
 
                 if not alias.user or not alias.user.is_active:
                     elapsed = time.time() - start

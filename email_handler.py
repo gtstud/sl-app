@@ -33,6 +33,7 @@ It should contain the following info:
 
 import argparse
 import email
+import re2 as re
 import uuid
 import logging
 from email import encoders
@@ -660,7 +661,16 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
         )
         return [(True, status.E502)]
 
-    if not alias.enabled or alias.is_trashed() or contact.block_forward:
+    regex_mismatch = False
+    if alias.sender_regex:
+        try:
+            if not re.search(alias.sender_regex, envelope.mail_from, re.IGNORECASE):
+                regex_mismatch = True
+                LOG.d("Sender %s does not match alias %s regex %s, do not forward", envelope.mail_from, alias, alias.sender_regex)
+        except re.error as e:
+            LOG.w("Invalid regex %s for alias %s: %s", alias.sender_regex, alias, e)
+
+    if not alias.enabled or alias.is_trashed() or contact.block_forward or regex_mismatch:
         if not alias.enabled:
             LOG.d("%s is disabled, do not forward", alias)
 
@@ -669,6 +679,9 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
 
         if contact.block_forward:
             LOG.d("Contact %s of alias %s is blocked, do not forward", contact, alias)
+
+        if regex_mismatch:
+            LOG.d("Sender %s mismatch for alias %s, do not forward", envelope.mail_from, alias)
 
         EmailLog.create(
             contact_id=contact.id,
