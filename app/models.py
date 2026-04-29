@@ -1610,6 +1610,9 @@ class Alias(Base, ModelMixin):
     # the name to use when user replies/sends from alias
     name = sa.Column(sa.String(128), nullable=True, default=None)
 
+    # optional regex pattern that must match the sender email. if not matching, email is dropped
+    sender_regex = sa.Column(sa.String(512), nullable=True, default=None)
+
     enabled = sa.Column(sa.Boolean(), default=True, nullable=False)
     flags = sa.Column(
         sa.BigInteger(), default=0, server_default="0", nullable=False, index=True

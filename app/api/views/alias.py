@@ -271,6 +271,7 @@ def update_alias(alias_id):
         name (optional): in body
         mailbox_id (optional): in body
         disable_pgp (optional): in body
+        sender_regex (optional): in body
     Output:
         200
     """
@@ -337,6 +338,11 @@ def update_alias(alias_id):
     if "pinned" in data:
         alias.pinned = data.get("pinned")
         changed_fields.append("pinned")
+        changed = True
+
+    if "sender_regex" in data:
+        alias.sender_regex = data.get("sender_regex")
+        changed_fields.append("sender_regex")
         changed = True
 
     if changed:

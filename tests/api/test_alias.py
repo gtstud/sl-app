@@ -767,3 +767,18 @@ def test_cannot_create_alias_with_admin_disabled_mailbox_via_api(flask_client):
     else:
         # Alias creation was blocked
         assert r.status_code >= 400
+
+def test_update_alias_sender_regex(flask_client):
+    user, api_key = get_new_user_and_api_key()
+
+    alias = Alias.create_new_random(user)
+    Session.commit()
+
+    r = flask_client.put(
+        url_for("api.update_alias", alias_id=alias.id),
+        headers={"Authentication": api_key.code},
+        json={"sender_regex": ".*@example.com"},
+    )
+    assert r.status_code == 200
+    alias = Alias.get(alias.id)
+    assert alias.sender_regex == ".*@example.com"

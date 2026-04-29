@@ -8,9 +8,11 @@ from app.models import Alias
 
 
 class AliasAdmin(SLModelView):
+    can_edit = True
+    form_edit_rules = ["sender_regex", "note"]
     form_base_class = SecureForm
-    column_searchable_list = ["id", "user.email", "email", "mailbox.email"]
-    column_filters = ["id", "user.email", "email", "mailbox.email"]
+    column_searchable_list = ["id", "user.email", "email", "mailbox.email", "sender_regex"]
+    column_filters = ["id", "user.email", "email", "mailbox.email", "sender_regex"]
 
     column_formatters = {
         "created_at": _admin_date_formatter,
