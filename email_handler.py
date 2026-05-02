@@ -33,7 +33,6 @@ It should contain the following info:
 
 import argparse
 import email
-import re2 as re
 import uuid
 import logging
 from email import encoders
@@ -664,21 +663,22 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
         return [(True, status.E502)]
 
     regex_mismatch = False
-    if alias.sender_allow_regex:
-        try:
-            if not re.search(
-                alias.sender_allow_regex, envelope.mail_from, re.IGNORECASE
-            ):
-                regex_mismatch = True
-                LOG.d(
-                    "Sender %s does not match alias %s regex %s, regex mismatch",
-                    envelope.mail_from,
-                    alias,
-                    alias.sender_allow_regex,
-                )
-        except re.error as e:
-            LOG.w(
-                "Invalid regex %s for alias %s: %s", alias.sender_allow_regex, alias, e
+    if alias.sender_allow_list is not None:
+        import tldextract
+
+        ext = tldextract.extract(envelope.mail_from.lower())
+        root_domain = (
+            ext.registered_domain
+            if ext.registered_domain
+            else envelope.mail_from.split("@")[-1].lower()
+        )
+        if root_domain not in alias.get_sender_allow_domains():
+            regex_mismatch = True
+            LOG.d(
+                "Sender %s root domain %s does not match alias %s allow list, regex mismatch",
+                envelope.mail_from,
+                root_domain,
+                alias,
             )
 
     if not alias.enabled or alias.is_trashed() or contact.block_forward:
@@ -935,46 +935,11 @@ def forward_email_to_mailbox(
             f"""Forwarded by SimpleLogin to {alias.email} from "{sender}" with <b>{orig_subject}</b> as subject""",
         )
 
-    if regex_mismatch and not user.marker_in_subject:
-        # We will handle From header below
-        pass
-
-    if regex_mismatch and user.marker_in_subject:
-        import arrow
-
-        age_hours = (arrow.now() - contact.created_at).total_seconds() / 3600
-        if contact_created or age_hours < 24:
-            prefix = "⚠️⚠️ "
-        elif age_hours < 192:
-            prefix = "⚠️ "
-        else:
-            prefix = "〰️ "
-
+    if regex_mismatch:
+        prefix = "⚠️⚠️ " if contact_created else "⚠️ "
         current_subject = msg[headers.SUBJECT]
         current_subject = get_header_unicode(current_subject) or ""
-
-        insert_idx = len(current_subject)
-        for i, char in enumerate(current_subject):
-            if i >= 8 and not char.isalpha():
-                insert_idx = i
-                break
-
-        if insert_idx < len(current_subject):
-            before = current_subject[:insert_idx].rstrip()
-            after = current_subject[insert_idx:].lstrip()
-            new_subject = (
-                before
-                + (" " if before else "")
-                + prefix.rstrip()
-                + (" " if after else "")
-                + after
-            )
-        else:
-            new_subject = (
-                current_subject + (" " if current_subject else "") + prefix.rstrip()
-            )
-
-        add_or_replace_header(msg, "Subject", new_subject)
+        add_or_replace_header(msg, "Subject", prefix + current_subject)
         LOG.d(
             "Regex mismatch: prepended to subject for %s -> %s",
             contact.website_email,
@@ -1022,53 +987,6 @@ def forward_email_to_mailbox(
     # replace the email part in from: header
     old_from_header = msg[headers.FROM]
     new_from_header = contact.new_addr()
-
-    marker_prefix = ""
-    if regex_mismatch and not user.marker_in_subject:
-        import arrow
-
-        age_hours = (arrow.now() - contact.created_at).total_seconds() / 3600
-        if contact_created or age_hours < 24:
-            marker_prefix = "⚠️⚠️ "
-        elif age_hours < 192:
-            marker_prefix = "⚠️ "
-        else:
-            marker_prefix = "〰️ "
-
-    if marker_prefix:
-        try:
-            from app.email_utils import parse_full_address
-            from email.utils import formataddr
-
-            display_name, email_addr = parse_full_address(new_from_header)
-
-            insert_idx = len(display_name)
-            for i, char in enumerate(display_name):
-                if not char.isalpha():
-                    insert_idx = i
-                    break
-
-            if insert_idx < len(display_name):
-                before = display_name[:insert_idx].rstrip()
-                after = display_name[insert_idx:].lstrip()
-                new_display_name = (
-                    before
-                    + (" " if before else "")
-                    + marker_prefix.rstrip()
-                    + (" " if after else "")
-                    + after
-                )
-            else:
-                new_display_name = (
-                    display_name
-                    + (" " if display_name else "")
-                    + marker_prefix.rstrip()
-                )
-
-            new_from_header = formataddr((new_display_name, email_addr))
-        except Exception as e:
-            LOG.w(f"Failed to apply marker to From header: {e}")
-
     add_or_replace_header(msg, "From", new_from_header)
     LOG.d("From header, new:%s, old:%s", new_from_header, old_from_header)
 

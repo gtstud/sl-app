@@ -122,11 +122,11 @@
               {% endif %}
             </div>
             <div class="col text-right d-flex justify-content-end align-items-center">
-              <label class="custom-switch cursor mr-3" data-toggle="tooltip" title="Toggle domain in soft allow list" style="padding-left: 0px">
-                <span class="custom-switch-description regex-label-{{ contact.id }} mr-2" style="margin-left: 0;">
+                            <label class="custom-switch cursor mr-3" data-toggle="tooltip" {% if contact.domain_in_allow_list %} title="Remove {{ contact.root_domain }} from whitelist" {% else %} title="Whitelist {{ contact.root_domain }}" {% endif %} style="padding-left: 0px">
+                <span class="custom-switch-description allow-label-{{ contact.id }} mr-2" style="margin-left: 0;">
                   {{ contact.warning_marker }}
                 </span>
-                <input type="checkbox" class="toggle-contact-regex custom-switch-input" data-contact="{{ contact.id }}" data-contact-email="{{ contact.website_email }}" {{ "checked" if contact.domain_in_allow_regex else "" }}>
+                <input type="checkbox" class="toggle-contact-regex custom-switch-input" data-contact="{{ contact.id }}" data-contact-email="{{ contact.website_email }}" {{ "checked" if contact.domain_in_allow_list else "" }}>
                 <span class="custom-switch-indicator"></span>
               </label>
 
@@ -288,13 +288,13 @@
       }
     }
 
-    $(".toggle-contact-regex").change(async function () {
+    $(".toggle-contact-allow-list").change(async function () {
       let contactID = $(this).data("contact");
       let contactEmail = $(this).data("contact-email");
       let that = $(this);
 
       try {
-        let res = await fetch(`/api/contacts/${contactID}/toggle_regex`, {
+        let res = await fetch(`/api/contacts/${contactID}/toggle_allow_list`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -304,25 +304,25 @@
 
         if (res.ok) {
           let json = await res.json();
-          let rootDomain = json.root_domain;
+          let domain = contactEmail.split('@').pop();
 
-          $(".toggle-contact-regex").each(function() {
+          $(".toggle-contact-allow-list").each(function() {
             let otherEmail = $(this).data("contact-email");
-            if (otherEmail && otherEmail.toLowerCase().endsWith(rootDomain)) {
+            if (otherEmail && otherEmail.split('@').pop() === domain) {
               let otherID = $(this).data("contact");
-              $(this).prop("checked", json.in_regex);
-              if (json.in_regex) {
-                $(`.regex-label-${otherID}`).text("");
+              $(this).prop("checked", json.in_allow_list);
+              if (json.in_allow_list) {
+                $(`.allow-label-${otherID}`).text("");
               } else {
-                $(`.regex-label-${otherID}`).text(json.marker);
+                $(`.allow-label-${otherID}`).text("⚠️");
               }
             }
           });
 
-          if (json.in_regex) {
-            toastr.success(`Domain ${rootDomain} is now in the soft allow list`);
+          if (json.in_allow_list) {
+            toastr.success(`Domain ${domain} is now in the soft allow list`);
           } else {
-            toastr.success(`Domain ${rootDomain} is removed from the soft allow list`);
+            toastr.success(`Domain ${domain} is removed from the soft allow list`);
           }
         } else {
           toastr.error("Sorry for the inconvenience! Could you refresh the page & retry please?", "Unknown Error");

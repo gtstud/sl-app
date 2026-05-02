@@ -125,27 +125,12 @@ def create_contact(
             f"Created contact {contact} for alias {alias} with email {email} invalid_email={is_invalid_email}"
         )
 
-        if not is_invalid_email:
+        if is_first_contact and not alias.sender_allow_list and not is_invalid_email:
             domain = email.split("@")[-1]
             if domain:
-                if (
-                    is_first_contact
-                    and not alias.sender_allow_regex
-                    and alias.user.auto_whitelist_on_first_contact
-                ):
-                    alias.set_sender_allow_domains({domain})
-                    Session.add(alias)
-                    Session.commit()
-                elif (
-                    not is_first_contact
-                    and alias.sender_allow_regex
-                    and not automatic_created
-                ):
-                    domains = alias.get_sender_allow_domains()
-                    domains.add(domain)
-                    alias.set_sender_allow_domains(domains)
-                    Session.add(alias)
-                    Session.commit()
+                alias.set_sender_allow_domains({domain})
+                Session.add(alias)
+                Session.commit()
 
         return ContactCreateResult(contact, created=True, error=None)
     except CannotCreateContactForReverseAlias as e:
