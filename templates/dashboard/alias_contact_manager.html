@@ -124,7 +124,7 @@
             <div class="col text-right d-flex justify-content-end align-items-center">
               <label class="custom-switch cursor mr-3" data-toggle="tooltip" title="Toggle domain in soft allow list" style="padding-left: 0px">
                 <span class="custom-switch-description regex-label-{{ contact.id }} mr-2" style="margin-left: 0;">
-                  {% if not contact.domain_in_allow_regex %}⚠️{% endif %}
+                  {{ contact.warning_marker }}
                 </span>
                 <input type="checkbox" class="toggle-contact-regex custom-switch-input" data-contact="{{ contact.id }}" data-contact-email="{{ contact.website_email }}" {{ "checked" if contact.domain_in_allow_regex else "" }}>
                 <span class="custom-switch-indicator"></span>
@@ -292,7 +292,7 @@
       let contactID = $(this).data("contact");
       let contactEmail = $(this).data("contact-email");
       let that = $(this);
-      
+
       try {
         let res = await fetch(`/api/contacts/${contactID}/toggle_regex`, {
           method: "POST",
@@ -304,25 +304,25 @@
 
         if (res.ok) {
           let json = await res.json();
-          let domain = contactEmail.split('@').pop();
-          
+          let rootDomain = json.root_domain;
+
           $(".toggle-contact-regex").each(function() {
             let otherEmail = $(this).data("contact-email");
-            if (otherEmail && otherEmail.split('@').pop() === domain) {
+            if (otherEmail && otherEmail.toLowerCase().endsWith(rootDomain)) {
               let otherID = $(this).data("contact");
               $(this).prop("checked", json.in_regex);
               if (json.in_regex) {
                 $(`.regex-label-${otherID}`).text("");
               } else {
-                $(`.regex-label-${otherID}`).text("⚠️");
+                $(`.regex-label-${otherID}`).text(json.marker);
               }
             }
           });
 
           if (json.in_regex) {
-            toastr.success(`Domain ${domain} is now in the soft allow list`);
+            toastr.success(`Domain ${rootDomain} is now in the soft allow list`);
           } else {
-            toastr.success(`Domain ${domain} is removed from the soft allow list`);
+            toastr.success(`Domain ${rootDomain} is removed from the soft allow list`);
           }
         } else {
           toastr.error("Sorry for the inconvenience! Could you refresh the page & retry please?", "Unknown Error");

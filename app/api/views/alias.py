@@ -490,6 +490,7 @@ def toggle_contact(contact_id):
 
     return jsonify(block_forward=contact.block_forward), 200
 
+
 @api_bp.route("/contacts/<int:contact_id>/toggle_regex", methods=["POST"])
 @require_api_auth
 def toggle_contact_regex(contact_id):
@@ -503,17 +504,31 @@ def toggle_contact_regex(contact_id):
         return jsonify(error="Forbidden"), 403
 
     alias = contact.alias
-    domain = contact.website_email.split('@')[-1]
-    
+    import tldextract
+    import arrow
+
+    domain = contact.website_email.split("@")[-1]
+    ext = tldextract.extract(domain.lower())
+    root_domain = ext.registered_domain if ext.registered_domain else domain.lower()
+
     domains = alias.get_sender_allow_domains()
-    if domain in domains:
-        domains.remove(domain)
+    if root_domain in domains:
+        domains.remove(root_domain)
         in_regex = False
+
+        age_hours = (arrow.now() - contact.created_at).total_seconds() / 3600
+        if age_hours < 24:
+            marker = "⚠️⚠️ "
+        elif age_hours < 192:
+            marker = "⚠️ "
+        else:
+            marker = "〰️ "
     else:
-        domains.add(domain)
+        domains.add(root_domain)
         in_regex = True
-        
+        marker = ""
+
     alias.set_sender_allow_domains(domains)
     Session.commit()
-    
-    return jsonify(in_regex=in_regex), 200
+
+    return jsonify(in_regex=in_regex, marker=marker, root_domain=root_domain), 200

@@ -617,7 +617,9 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
 
     from_header = get_header_unicode(msg[headers.FROM])
     LOG.d("Create or get contact for from_header:%s", from_header)
-    contact, contact_created = get_or_create_contact(from_header, envelope.mail_from, alias)
+    contact, contact_created = get_or_create_contact(
+        from_header, envelope.mail_from, alias
+    )
     if not contact:
         return [(False, status.E504)]
     alias = (
@@ -664,11 +666,20 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
     regex_mismatch = False
     if alias.sender_allow_regex:
         try:
-            if not re.search(alias.sender_allow_regex, envelope.mail_from, re.IGNORECASE):
+            if not re.search(
+                alias.sender_allow_regex, envelope.mail_from, re.IGNORECASE
+            ):
                 regex_mismatch = True
-                LOG.d("Sender %s does not match alias %s regex %s, regex mismatch", envelope.mail_from, alias, alias.sender_allow_regex)
+                LOG.d(
+                    "Sender %s does not match alias %s regex %s, regex mismatch",
+                    envelope.mail_from,
+                    alias,
+                    alias.sender_allow_regex,
+                )
         except re.error as e:
-            LOG.w("Invalid regex %s for alias %s: %s", alias.sender_allow_regex, alias, e)
+            LOG.w(
+                "Invalid regex %s for alias %s: %s", alias.sender_allow_regex, alias, e
+            )
 
     if not alias.enabled or alias.is_trashed() or contact.block_forward:
         if not alias.enabled:
@@ -754,7 +765,15 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
             # create a copy of message for each forward
             ret.append(
                 forward_email_to_mailbox(
-                    alias, copy(msg), contact, envelope, mailbox, user, reply_to_contact, regex_mismatch, contact_created
+                    alias,
+                    copy(msg),
+                    contact,
+                    envelope,
+                    mailbox,
+                    user,
+                    reply_to_contact,
+                    regex_mismatch,
+                    contact_created,
                 )
             )
 
@@ -916,12 +935,51 @@ def forward_email_to_mailbox(
             f"""Forwarded by SimpleLogin to {alias.email} from "{sender}" with <b>{orig_subject}</b> as subject""",
         )
 
-    if regex_mismatch:
-        prefix = "⚠️⚠️ " if contact_created else "⚠️ "
+    if regex_mismatch and not user.marker_in_subject:
+        # We will handle From header below
+        pass
+
+    if regex_mismatch and user.marker_in_subject:
+        import arrow
+
+        age_hours = (arrow.now() - contact.created_at).total_seconds() / 3600
+        if contact_created or age_hours < 24:
+            prefix = "⚠️⚠️ "
+        elif age_hours < 192:
+            prefix = "⚠️ "
+        else:
+            prefix = "〰️ "
+
         current_subject = msg[headers.SUBJECT]
         current_subject = get_header_unicode(current_subject) or ""
-        add_or_replace_header(msg, "Subject", prefix + current_subject)
-        LOG.d("Regex mismatch: prepended to subject for %s -> %s", contact.website_email, alias)
+
+        insert_idx = len(current_subject)
+        for i, char in enumerate(current_subject):
+            if i >= 8 and not char.isalpha():
+                insert_idx = i
+                break
+
+        if insert_idx < len(current_subject):
+            before = current_subject[:insert_idx].rstrip()
+            after = current_subject[insert_idx:].lstrip()
+            new_subject = (
+                before
+                + (" " if before else "")
+                + prefix.rstrip()
+                + (" " if after else "")
+                + after
+            )
+        else:
+            new_subject = (
+                current_subject + (" " if current_subject else "") + prefix.rstrip()
+            )
+
+        add_or_replace_header(msg, "Subject", new_subject)
+        LOG.d(
+            "Regex mismatch: prepended to subject for %s -> %s",
+            contact.website_email,
+            alias,
+        )
 
     # create PGP email if needed
     if mailbox.pgp_enabled() and user.is_premium() and not alias.disable_pgp:
@@ -964,6 +1022,53 @@ def forward_email_to_mailbox(
     # replace the email part in from: header
     old_from_header = msg[headers.FROM]
     new_from_header = contact.new_addr()
+
+    marker_prefix = ""
+    if regex_mismatch and not user.marker_in_subject:
+        import arrow
+
+        age_hours = (arrow.now() - contact.created_at).total_seconds() / 3600
+        if contact_created or age_hours < 24:
+            marker_prefix = "⚠️⚠️ "
+        elif age_hours < 192:
+            marker_prefix = "⚠️ "
+        else:
+            marker_prefix = "〰️ "
+
+    if marker_prefix:
+        try:
+            from app.email_utils import parse_full_address
+            from email.utils import formataddr
+
+            display_name, email_addr = parse_full_address(new_from_header)
+
+            insert_idx = len(display_name)
+            for i, char in enumerate(display_name):
+                if not char.isalpha():
+                    insert_idx = i
+                    break
+
+            if insert_idx < len(display_name):
+                before = display_name[:insert_idx].rstrip()
+                after = display_name[insert_idx:].lstrip()
+                new_display_name = (
+                    before
+                    + (" " if before else "")
+                    + marker_prefix.rstrip()
+                    + (" " if after else "")
+                    + after
+                )
+            else:
+                new_display_name = (
+                    display_name
+                    + (" " if display_name else "")
+                    + marker_prefix.rstrip()
+                )
+
+            new_from_header = formataddr((new_display_name, email_addr))
+        except Exception as e:
+            LOG.w(f"Failed to apply marker to From header: {e}")
+
     add_or_replace_header(msg, "From", new_from_header)
     LOG.d("From header, new:%s, old:%s", new_from_header, old_from_header)
 

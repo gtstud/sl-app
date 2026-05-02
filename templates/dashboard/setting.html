@@ -494,6 +494,59 @@
                     </div>
                   </div>
                   <!-- END Alias delete action -->
+                  <!-- START Auto whitelist -->
+                  <div class="card" id="auto-whitelist-contact">
+                    <div class="card-body">
+                      <div class="card-title">Auto-whitelist on First Contact</div>
+                      <div class="mb-3">
+                        When an alias receives an email for the first time, its sender can be automatically added to the trust list.
+                        This helps prevent legitimate emails from new services from being marked with a warning emoji,
+                        while still alerting you if a third party later tries to contact the same alias.
+                      </div>
+                      <form method="post" action="#auto-whitelist-contact">
+                        {{ csrf_form.csrf_token }}
+                        <input type="hidden" name="form-name" value="auto-whitelist-contact">
+
+                        <div class="form-check mb-2">
+                          <input type="checkbox" id="enable-auto-whitelist" name="enable" {% if current_user.auto_whitelist_on_first_contact %}checked{% endif %} class="form-check-input">
+                          <label for="enable-auto-whitelist">Enable auto-whitelist for new aliases</label>
+                        </div>
+
+                        <div class="form-group mt-3" id="marker-placement-group" {% if not current_user.auto_whitelist_on_first_contact %}style="display: none;"{% endif %}>
+                          <label>Warning Emoji Placement</label>
+                          <select class="form-control" name="marker-placement">
+                            <option value="from" {% if not current_user.marker_in_subject %}selected="selected"{% endif %}>From display name (default)</option>
+                            <option value="subject" {% if current_user.marker_in_subject %}selected="selected"{% endif %}>Subject line</option>
+                          </select>
+                        </div>
+
+                        <button type="submit" class="btn btn-outline-primary mt-2">Update</button>
+                      </form>
+                    </div>
+                  </div>
+
+                  <script>
+                    document.getElementById('enable-auto-whitelist').addEventListener('change', function() {
+                      document.getElementById('marker-placement-group').style.display = this.checked ? 'block' : 'none';
+                    });
+                  </script>
+                  <!-- END Auto whitelist -->
+
+                  <!-- START Legacy Migration -->
+                  <div class="card" id="legacy-migration-whitelist">
+                    <div class="card-body">
+                      <div class="card-title">Legacy Migration Utility</div>
+                      <div class="mb-3">
+                        If you have existing aliases without an active trust list, this tool will analyze your past successful forwards and automatically whitelist the most frequent sender's domain for each alias. This makes it easy to adopt the new inhabitual sender warning feature across all your old aliases at once!
+                      </div>
+                      <form method="post" action="{{ url_for('dashboard.legacy_migration_whitelist') }}">
+                        {{ csrf_form.csrf_token }}
+                        <button type="submit" class="btn btn-outline-primary mt-2">Run Migration Tool</button>
+                      </form>
+                    </div>
+                  </div>
+                  <!-- END Legacy Migration -->
+
                   <div class="card" id="sender-header">
                     <div class="card-body">
                       <div class="card-title">Include original sender in email headers</div>

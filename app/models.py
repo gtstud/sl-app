@@ -12,6 +12,7 @@ import uuid
 from typing import List, Tuple, Optional, Union
 
 import arrow
+import tldextract
 import sqlalchemy as sa
 from arrow import Arrow
 from email_validator import validate_email
@@ -410,6 +411,8 @@ class User(Base, ModelMixin, UserMixin, PasswordOracle):
     FLAG_CREATED_FROM_PARTNER = 1 << 1
     FLAG_FREE_OLD_ALIAS_LIMIT = 1 << 2
     FLAG_CREATED_ALIAS_FROM_PARTNER = 1 << 3
+    FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT = 1 << 4
+    FLAG_MARKER_IN_SUBJECT = 1 << 5
 
     email = sa.Column(sa.String(256), unique=True, nullable=False)
 
@@ -675,6 +678,28 @@ class User(Base, ModelMixin, UserMixin, PasswordOracle):
         return User.FLAG_CREATED_FROM_PARTNER == (
             self.flags & User.FLAG_CREATED_FROM_PARTNER
         )
+
+    @property
+    def auto_whitelist_on_first_contact(self) -> bool:
+        return (self.flags & self.FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT) > 0
+
+    @auto_whitelist_on_first_contact.setter
+    def auto_whitelist_on_first_contact(self, value: bool):
+        if value:
+            self.flags = self.flags | self.FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT
+        else:
+            self.flags = self.flags & ~self.FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT
+
+    @property
+    def marker_in_subject(self) -> bool:
+        return (self.flags & self.FLAG_MARKER_IN_SUBJECT) > 0
+
+    @marker_in_subject.setter
+    def marker_in_subject(self, value: bool):
+        if value:
+            self.flags = self.flags | self.FLAG_MARKER_IN_SUBJECT
+        else:
+            self.flags = self.flags & ~self.FLAG_MARKER_IN_SUBJECT
 
     @staticmethod
     def subdomain_is_available():
@@ -1941,11 +1966,13 @@ class Alias(Base, ModelMixin):
         s = self.sender_allow_regex
         if s.startswith(".*@"):
             s = s[3:]
+        elif s.startswith(r".*(?:@|\.)"):
+            s = s[10:]
         if s.endswith("$"):
             s = s[:-1]
         if s.startswith("(") and s.endswith(")"):
             s = s[1:-1]
-        
+
         domains = s.split("|")
         return {d.replace(r"\.", ".") for d in domains if d}
 
@@ -1953,14 +1980,21 @@ class Alias(Base, ModelMixin):
         if not domains:
             self.sender_allow_regex = None
             return
-        
-        # Normalise to lowercase — domain names are case-insensitive by spec
-        escaped_domains = [d.lower().replace(".", r"\.") for d in domains]
+
+        root_domains = set()
+        for d in domains:
+            ext = tldextract.extract(d.lower())
+            if ext.registered_domain:
+                root_domains.add(ext.registered_domain)
+            else:
+                root_domains.add(d.lower())
+
+        escaped_domains = [d.replace(".", r"\.") for d in root_domains]
         if len(escaped_domains) == 1:
-            self.sender_allow_regex = f".*@{escaped_domains[0]}$"
+            self.sender_allow_regex = rf".*(?:@|\.){escaped_domains[0]}$"
         else:
             joined = "|".join(escaped_domains)
-            self.sender_allow_regex = f".*@({joined})$"
+            self.sender_allow_regex = rf".*(?:@|\.)({joined})$"
 
 
 class ClientUser(Base, ModelMixin):
@@ -2133,8 +2167,25 @@ class Contact(Base, ModelMixin):
 
     @property
     def domain_in_allow_regex(self) -> bool:
-        domain = self.website_email.split('@')[-1]
-        return domain in self.alias.get_sender_allow_domains()
+        domain = self.website_email.split("@")[-1]
+        ext = tldextract.extract(domain.lower())
+        root_domain = ext.registered_domain if ext.registered_domain else domain.lower()
+        return root_domain in self.alias.get_sender_allow_domains()
+
+    @property
+    def warning_marker(self) -> str:
+        if self.domain_in_allow_regex:
+            return ""
+
+        import arrow
+
+        age_hours = (arrow.now() - self.created_at).total_seconds() / 3600
+        if age_hours < 24:
+            return "⚠️⚠️ "
+        elif age_hours < 192:
+            return "⚠️ "
+        else:
+            return "〰️ "
 
     @classmethod
     def create(cls, **kw):

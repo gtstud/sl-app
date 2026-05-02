@@ -271,6 +271,19 @@ def setting():
             Session.commit()
             flash("Your preference has been updated", "success")
             return redirect(url_for("dashboard.setting"))
+        elif request.form.get("form-name") == "auto-whitelist-contact":
+            enable = request.form.get("enable") == "on"
+            marker_placement = request.form.get("marker-placement")
+
+            current_user.auto_whitelist_on_first_contact = enable
+            if enable:
+                current_user.marker_in_subject = marker_placement == "subject"
+            else:
+                current_user.marker_in_subject = False
+
+            Session.commit()
+            flash("Your preference has been updated", "success")
+            return redirect(url_for("dashboard.setting"))
         elif request.form.get("form-name") == "alias-delete-action":
             action = request.form.get("alias-delete-action")
             if action == str(UserAliasDeleteAction.MoveToTrash.value):
@@ -319,3 +332,56 @@ def setting():
         connect_with_proton=CONNECT_WITH_PROTON,
         can_unlink_proton_account=can_unlink_proton_account(current_user),
     )
+
+
+@dashboard_bp.route("/settings/legacy_migration_whitelist", methods=["POST"])
+@login_required
+def legacy_migration_whitelist():
+    import tldextract
+    from collections import defaultdict
+    from app.models import Alias, EmailLog, Contact
+    from app.db import Session
+
+    aliases = (
+        Alias.filter_by(user_id=current_user.id)
+        .filter(Alias.sender_allow_regex.is_(None))
+        .all()
+    )
+
+    updated_count = 0
+    for alias in aliases:
+        logs = EmailLog.filter_by(
+            alias_id=alias.id, user_id=current_user.id, blocked=False, bounced=False
+        ).all()
+
+        domain_counts = defaultdict(int)
+        for log in logs:
+            if log.contact_id:
+                contact = Contact.get(log.contact_id)
+                if contact:
+                    email = contact.website_email
+                    ext = tldextract.extract(email.lower())
+                    if ext.registered_domain:
+                        domain_counts[ext.registered_domain] += 1
+                    else:
+                        domain_counts[email.split("@")[-1].lower()] += 1
+
+        if domain_counts:
+            top_domain = max(domain_counts, key=domain_counts.get)
+            alias.set_sender_allow_domains({top_domain})
+            Session.add(alias)
+            updated_count += 1
+
+    if updated_count > 0:
+        Session.commit()
+        flash(
+            f"Successfully auto-whitelisted the most frequent sender domain for {updated_count} aliases.",
+            "success",
+        )
+    else:
+        flash(
+            "No aliases needed auto-whitelisting or no forwarding history found.",
+            "info",
+        )
+
+    return redirect(url_for("dashboard.setting"))
