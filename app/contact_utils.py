@@ -125,7 +125,7 @@ def create_contact(
             f"Created contact {contact} for alias {alias} with email {email} invalid_email={is_invalid_email}"
         )
         
-        if is_first_contact and not alias.sender_allow_regex and not is_invalid_email:
+        if is_first_contact and not alias.sender_allow_list and not is_invalid_email and alias.user.auto_whitelist_on_first_contact:
             domain = email.split('@')[-1]
             if domain:
                 alias.set_sender_allow_domains({domain})

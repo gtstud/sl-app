@@ -122,11 +122,11 @@
               {% endif %}
             </div>
             <div class="col text-right d-flex justify-content-end align-items-center">
-              <label class="custom-switch cursor mr-3" data-toggle="tooltip" title="Toggle domain in soft allow list" style="padding-left: 0px">
+              <label class="custom-switch cursor mr-3" data-toggle="tooltip" title="{{ 'remove ' + contact.website_email.split('@')[-1] + ' from whitelist' if contact.domain_in_allow_list else 'whitelist ' + contact.website_email.split('@')[-1] }}" style="padding-left: 0px">
                 <span class="custom-switch-description regex-label-{{ contact.id }} mr-2" style="margin-left: 0;">
-                  {% if not contact.domain_in_allow_regex %}⚠️{% endif %}
+                  {{ contact.ui_tag }}
                 </span>
-                <input type="checkbox" class="toggle-contact-regex custom-switch-input" data-contact="{{ contact.id }}" data-contact-email="{{ contact.website_email }}" {{ "checked" if contact.domain_in_allow_regex else "" }}>
+                <input type="checkbox" class="toggle-contact-regex custom-switch-input" data-contact="{{ contact.id }}" data-contact-email="{{ contact.website_email }}" {{ "checked" if contact.domain_in_allow_list else "" }}>
                 <span class="custom-switch-indicator"></span>
               </label>
 
@@ -294,7 +294,7 @@
       let that = $(this);
       
       try {
-        let res = await fetch(`/api/contacts/${contactID}/toggle_regex`, {
+        let res = await fetch(`/api/contacts/${contactID}/toggle_allow_list`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -304,26 +304,13 @@
 
         if (res.ok) {
           let json = await res.json();
-          let domain = contactEmail.split('@').pop();
+          let registeredDomain = json.registered_domain;
           
-          $(".toggle-contact-regex").each(function() {
-            let otherEmail = $(this).data("contact-email");
-            if (otherEmail && otherEmail.split('@').pop() === domain) {
-              let otherID = $(this).data("contact");
-              $(this).prop("checked", json.in_regex);
-              if (json.in_regex) {
-                $(`.regex-label-${otherID}`).text("");
-              } else {
-                $(`.regex-label-${otherID}`).text("⚠️");
-              }
-            }
-          });
+          // we need to reload the page to get the correct age-based tags
+          // if we try to do it client side we don't know the exact creation dates
+          // or we could just do a simple reload or update the tooltip and checkmark
+          window.location.reload();
 
-          if (json.in_regex) {
-            toastr.success(`Domain ${domain} is now in the soft allow list`);
-          } else {
-            toastr.success(`Domain ${domain} is removed from the soft allow list`);
-          }
         } else {
           toastr.error("Sorry for the inconvenience! Could you refresh the page & retry please?", "Unknown Error");
           that.prop("checked", !that.prop("checked"));

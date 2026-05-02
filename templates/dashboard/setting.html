@@ -494,6 +494,59 @@
                     </div>
                   </div>
                   <!-- END Alias delete action -->
+                  <!-- START Autowhitelist -->
+                  <div class="card" id="autowhitelist">
+                    <div class="card-body">
+                      <div class="card-title">Inhabitual Sender Alerts & Auto-whitelist</div>
+                      <div class="mb-3">
+                        Alerts you when an alias receives an email from an unexpected sender domain by adding a ⚠️ tag to the email.
+                        <br />
+                        When enabled, the very first sender to a newly created alias will automatically be added to its soft allow list.
+                      </div>
+                      <form method="post" action="#autowhitelist">
+                        {{ csrf_form.csrf_token }}
+                        <input type="hidden" name="form-name" value="autowhitelist">
+
+                        <div class="form-check mb-2">
+                          <input type="checkbox" id="enable-autowhitelist" name="enable" {% if current_user.auto_whitelist_on_first_contact %}checked{% endif %} class="form-check-input" onchange="toggleAutowhitelistOptions()">
+                          <label for="enable-autowhitelist">Auto-whitelist on first inbound email that creates an alias</label>
+                        </div>
+
+                        <div id="autowhitelist-options" style="margin-left: 20px; {% if not current_user.auto_whitelist_on_first_contact %}display: none;{% endif %}">
+                          <div class="form-check mb-2">
+                            <input type="checkbox" id="marker-in-subject" name="marker_in_subject" {% if current_user.marker_in_subject %}checked{% endif %} class="form-check-input">
+                            <label for="marker-in-subject">Tag location [toggle] From/Subject (Off = From, On = Subject)</label>
+                          </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-outline-primary mt-2">Update</button>
+                      </form>
+
+                      <div id="populate-whitelist-section" style="margin-top: 15px; {% if not current_user.auto_whitelist_on_first_contact %}display: none;{% endif %}">
+                        <form method="post" action="#autowhitelist">
+                          {{ csrf_form.csrf_token }}
+                          <input type="hidden" name="form-name" value="populate-whitelist">
+                          <button type="submit" class="btn btn-outline-secondary">Create a one-domain whitelist for all aliases with currently empty whitelists</button>
+                        </form>
+                      </div>
+
+                      <script>
+                        function toggleAutowhitelistOptions() {
+                          var checkbox = document.getElementById("enable-autowhitelist");
+                          var options = document.getElementById("autowhitelist-options");
+                          var populateSection = document.getElementById("populate-whitelist-section");
+                          if (checkbox.checked) {
+                            options.style.display = "block";
+                            populateSection.style.display = "block";
+                          } else {
+                            options.style.display = "none";
+                            populateSection.style.display = "none";
+                          }
+                        }
+                      </script>
+                    </div>
+                  </div>
+                  <!-- END Autowhitelist -->
                   <div class="card" id="sender-header">
                     <div class="card-body">
                       <div class="card-title">Include original sender in email headers</div>
