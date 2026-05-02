@@ -122,7 +122,7 @@
               {% endif %}
             </div>
             <div class="col text-right d-flex justify-content-end align-items-center">
-              <label class="custom-switch cursor mr-3" data-toggle="tooltip" title="{{ 'remove ' + contact.website_email.split('@')[-1] + ' from whitelist' if contact.domain_in_allow_list else 'whitelist ' + contact.website_email.split('@')[-1] }}" style="padding-left: 0px">
+              <label class="custom-switch cursor mr-3" data-toggle="tooltip" title="{{ 'remove ' + contact.registered_domain + ' from whitelist' if contact.domain_in_allow_list else 'whitelist ' + contact.registered_domain }}" style="padding-left: 0px">
                 <span class="custom-switch-description regex-label-{{ contact.id }} mr-2" style="margin-left: 0;">
                   {{ contact.ui_tag }}
                 </span>

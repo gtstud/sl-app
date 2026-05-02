@@ -2161,6 +2161,13 @@ class Contact(Base, ModelMixin):
         return self.alias.is_sender_allowed(self.website_email)
 
     @property
+    def registered_domain(self) -> str:
+        import tldextract
+        domain = self.website_email.split('@')[-1]
+        ext = tldextract.extract(domain)
+        return ext.registered_domain.lower() if ext.registered_domain else ext.domain.lower()
+
+    @property
     def ui_tag(self) -> str:
         if not self.alias.sender_allow_list or self.domain_in_allow_list:
             return "✅"
