@@ -410,6 +410,8 @@ class User(Base, ModelMixin, UserMixin, PasswordOracle):
     FLAG_CREATED_FROM_PARTNER = 1 << 1
     FLAG_FREE_OLD_ALIAS_LIMIT = 1 << 2
     FLAG_CREATED_ALIAS_FROM_PARTNER = 1 << 3
+    FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT = 1 << 4
+    FLAG_MARKER_IN_SUBJECT = 1 << 5
 
     email = sa.Column(sa.String(256), unique=True, nullable=False)
 
@@ -674,6 +676,18 @@ class User(Base, ModelMixin, UserMixin, PasswordOracle):
     def created_by_partner(self):
         return User.FLAG_CREATED_FROM_PARTNER == (
             self.flags & User.FLAG_CREATED_FROM_PARTNER
+        )
+
+    @property
+    def auto_whitelist_on_first_contact(self) -> bool:
+        return User.FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT == (
+            self.flags & User.FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT
+        )
+
+    @property
+    def marker_in_subject(self) -> bool:
+        return User.FLAG_MARKER_IN_SUBJECT == (
+            self.flags & User.FLAG_MARKER_IN_SUBJECT
         )
 
     @staticmethod
@@ -1610,8 +1624,8 @@ class Alias(Base, ModelMixin):
     # the name to use when user replies/sends from alias
     name = sa.Column(sa.String(128), nullable=True, default=None)
 
-    # optional regex pattern that must match the sender email. if not matching, email is dropped
-    sender_allow_regex = sa.Column(sa.String(512), nullable=True, default=None)
+    # optional list of domains that must match the sender email. if not matching, email is dropped
+    sender_allow_list = sa.Column(sa.JSON(), nullable=True, default=None)
 
     enabled = sa.Column(sa.Boolean(), default=True, nullable=False)
     flags = sa.Column(
@@ -1936,31 +1950,42 @@ class Alias(Base, ModelMixin):
         return f"<Alias {self.id} {self.email}>"
 
     def get_sender_allow_domains(self) -> set:
-        if not self.sender_allow_regex:
+        if not self.sender_allow_list:
             return set()
-        s = self.sender_allow_regex
-        if s.startswith(".*@"):
-            s = s[3:]
-        if s.endswith("$"):
-            s = s[:-1]
-        if s.startswith("(") and s.endswith(")"):
-            s = s[1:-1]
-        
-        domains = s.split("|")
-        return {d.replace(r"\.", ".") for d in domains if d}
+        return set(self.sender_allow_list)
 
     def set_sender_allow_domains(self, domains: set):
+        import tldextract
         if not domains:
-            self.sender_allow_regex = None
+            self.sender_allow_list = None
             return
         
-        # Normalise to lowercase — domain names are case-insensitive by spec
-        escaped_domains = [d.lower().replace(".", r"\.") for d in domains]
-        if len(escaped_domains) == 1:
-            self.sender_allow_regex = f".*@{escaped_domains[0]}$"
-        else:
-            joined = "|".join(escaped_domains)
-            self.sender_allow_regex = f".*@({joined})$"
+        # Normalise to lowercase and extract registered domains
+        extracted_domains = set()
+        for d in domains:
+            ext = tldextract.extract(d)
+            if ext.registered_domain:
+                extracted_domains.add(ext.registered_domain.lower())
+            elif ext.domain: # fallback if registered_domain is empty, e.g. for localhost
+                 extracted_domains.add(ext.domain.lower())
+
+        if not extracted_domains:
+            self.sender_allow_list = None
+            return
+
+        self.sender_allow_list = list(extracted_domains)
+
+    def is_sender_allowed(self, email_or_domain: str) -> bool:
+        if not self.sender_allow_list:
+            return True # implicitly allowed if list is not active
+
+        import tldextract
+        # If it's an email, extract the domain first
+        domain = email_or_domain.split('@')[-1] if '@' in email_or_domain else email_or_domain
+        ext = tldextract.extract(domain)
+        registered_domain = ext.registered_domain.lower() if ext.registered_domain else ext.domain.lower()
+
+        return registered_domain in self.sender_allow_list
 
 
 class ClientUser(Base, ModelMixin):
@@ -2132,9 +2157,21 @@ class Contact(Base, ModelMixin):
         return self.website_email
 
     @property
-    def domain_in_allow_regex(self) -> bool:
-        domain = self.website_email.split('@')[-1]
-        return domain in self.alias.get_sender_allow_domains()
+    def domain_in_allow_list(self) -> bool:
+        return self.alias.is_sender_allowed(self.website_email)
+
+    @property
+    def ui_tag(self) -> str:
+        if not self.alias.sender_allow_list or self.domain_in_allow_list:
+            return "✅"
+        now = arrow.now()
+        diff = (now - self.created_at).total_seconds() / 3600
+        if diff < 24:
+            return "⚠️⚠️"
+        elif diff < 192:
+            return "⚠️"
+        else:
+            return "〰️"
 
     @classmethod
     def create(cls, **kw):

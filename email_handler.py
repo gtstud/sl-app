@@ -662,13 +662,9 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
         return [(True, status.E502)]
 
     regex_mismatch = False
-    if alias.sender_allow_regex:
-        try:
-            if not re.search(alias.sender_allow_regex, envelope.mail_from, re.IGNORECASE):
-                regex_mismatch = True
-                LOG.d("Sender %s does not match alias %s regex %s, regex mismatch", envelope.mail_from, alias, alias.sender_allow_regex)
-        except re.error as e:
-            LOG.w("Invalid regex %s for alias %s: %s", alias.sender_allow_regex, alias, e)
+    if not alias.is_sender_allowed(envelope.mail_from):
+        regex_mismatch = True
+        LOG.d("Sender %s is not in allow list for alias %s", envelope.mail_from, alias)
 
     if not alias.enabled or alias.is_trashed() or contact.block_forward:
         if not alias.enabled:
@@ -917,11 +913,55 @@ def forward_email_to_mailbox(
         )
 
     if regex_mismatch:
-        prefix = "⚠️⚠️ " if contact_created else "⚠️ "
-        current_subject = msg[headers.SUBJECT]
-        current_subject = get_header_unicode(current_subject) or ""
-        add_or_replace_header(msg, "Subject", prefix + current_subject)
-        LOG.d("Regex mismatch: prepended to subject for %s -> %s", contact.website_email, alias)
+        now = arrow.now()
+        diff = (now - contact.created_at).total_seconds() / 3600
+        if diff < 24:
+            tag = "⚠️⚠️"
+        elif diff < 192:
+            tag = "⚠️"
+        else:
+            tag = "〰️"
+
+        def insert_tag(text, tag, start_pos=0):
+            text = text or ""
+            insert_pos = len(text)
+            for i in range(min(start_pos, len(text)), len(text)):
+                if not text[i].isalpha():
+                    insert_pos = i
+                    break
+
+            before = text[:insert_pos].rstrip(" ")
+            after = text[insert_pos:].lstrip(" ")
+
+            parts = []
+            if before:
+                parts.append(before)
+            parts.append(tag)
+            if after:
+                parts.append(after)
+
+            return " ".join(parts)
+
+        if user.marker_in_subject:
+            current_subject = msg[headers.SUBJECT]
+            current_subject = get_header_unicode(current_subject) or ""
+            new_subject = insert_tag(current_subject, tag, start_pos=8)
+            add_or_replace_header(msg, "Subject", new_subject)
+            LOG.d("Regex mismatch: inserted into subject for %s -> %s", contact.website_email, alias)
+        else:
+            current_from = msg[headers.FROM]
+            current_from = get_header_unicode(current_from) or ""
+            parsed_from = address.parse(current_from)
+            if parsed_from:
+                display_name = parsed_from.display_name or ""
+                new_display_name = insert_tag(display_name, tag, start_pos=0)
+                # Keep the original email address, update the display name
+                new_from = f'"{new_display_name}" <{parsed_from.address}>'
+                add_or_replace_header(msg, "From", new_from)
+            else:
+                new_from = insert_tag(current_from, tag, start_pos=0)
+                add_or_replace_header(msg, "From", new_from)
+            LOG.d("Regex mismatch: inserted into From for %s -> %s", contact.website_email, alias)
 
     # create PGP email if needed
     if mailbox.pgp_enabled() and user.is_premium() and not alias.disable_pgp:

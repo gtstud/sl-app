@@ -18,8 +18,8 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column('alias', sa.Column('sender_allow_regex', sa.String(length=512), nullable=True))
+    op.add_column('alias', sa.Column('sender_allow_list', sa.JSON(), nullable=True))
 
 
 def downgrade():
-    op.drop_column('alias', 'sender_allow_regex')
+    op.drop_column('alias', 'sender_allow_list')

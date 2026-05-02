@@ -284,6 +284,49 @@ def setting():
                 return redirect(url_for("dashboard.setting"))
             Session.commit()
             flash("Your preference has been updated", "success")
+        elif request.form.get("form-name") == "autowhitelist":
+            enable = request.form.get("enable")
+            marker_in_subject = request.form.get("marker_in_subject")
+
+            if enable == "on":
+                current_user.flags = current_user.flags | User.FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT
+                if marker_in_subject == "on":
+                    current_user.flags = current_user.flags | User.FLAG_MARKER_IN_SUBJECT
+                else:
+                    current_user.flags = current_user.flags & ~User.FLAG_MARKER_IN_SUBJECT
+            else:
+                current_user.flags = current_user.flags & ~User.FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT
+                current_user.flags = current_user.flags & ~User.FLAG_MARKER_IN_SUBJECT
+
+            Session.commit()
+            flash("Your preference has been updated", "success")
+            return redirect(url_for("dashboard.setting") + "#autowhitelist")
+        elif request.form.get("form-name") == "populate-whitelist":
+            import tldextract
+            from collections import Counter
+            from app.models import Alias, Contact
+
+            # For aliases with empty whitelist, find most frequent contact and add it
+            aliases = Alias.filter_by(user_id=current_user.id).all()
+            for alias in aliases:
+                if not alias.sender_allow_list:
+                    contacts = Contact.filter_by(alias_id=alias.id).all()
+                    if contacts:
+                        domains = []
+                        for contact in contacts:
+                            ext = tldextract.extract(contact.website_email.split('@')[-1])
+                            registered_domain = ext.registered_domain.lower() if ext.registered_domain else ext.domain.lower()
+                            if registered_domain:
+                                domains.append(registered_domain)
+
+                        if domains:
+                            most_common_domain = Counter(domains).most_common(1)[0][0]
+                            alias.set_sender_allow_domains({most_common_domain})
+                            Session.add(alias)
+
+            Session.commit()
+            flash("Whitelists populated successfully", "success")
+            return redirect(url_for("dashboard.setting") + "#autowhitelist")
 
     manual_sub = ManualSubscription.get_by(user_id=current_user.id)
     apple_sub = AppleSubscription.get_by(user_id=current_user.id)
