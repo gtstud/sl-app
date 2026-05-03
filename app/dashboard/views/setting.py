@@ -1,7 +1,7 @@
+import arrow
 from io import BytesIO
 from typing import Optional, Tuple
 
-import arrow
 from flask import (
     render_template,
     request,

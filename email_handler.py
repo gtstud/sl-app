@@ -31,14 +31,12 @@ It should contain the following info:
 
 """
 
+from app.email_utils import encode_text
 import argparse
 import arrow
-from app.email_utils import encode_text
 import email
-import re2 as re
 import uuid
 import logging
-import arrow
 from email import encoders
 from email.encoders import encode_noop
 from email.message import Message
@@ -915,6 +913,49 @@ def forward_email_to_mailbox(
             f"""Forwarded by SimpleLogin to {alias.email} from "{sender}" with <b>{orig_subject}</b> as subject""",
         )
 
+    # create PGP email if needed
+    if mailbox.pgp_enabled() and user.is_premium() and not alias.disable_pgp:
+        LOG.d("Encrypt message using mailbox %s", mailbox)
+
+        try:
+            msg = prepare_pgp_message(
+                msg, mailbox.pgp_finger_print, mailbox.pgp_public_key, can_sign=True
+            )
+        except PGPException:
+            LOG.w(
+                "Cannot encrypt message %s -> %s. %s %s", contact, alias, mailbox, user
+            )
+            msg = add_header(
+                msg,
+                f"""PGP encryption fails with {mailbox.email}'s PGP key""",
+            )
+
+    # add custom header
+    add_or_replace_header(msg, headers.SL_DIRECTION, "Forward")
+
+    msg[headers.SL_EMAIL_LOG_ID] = str(email_log.id)
+    if user.include_header_email_header:
+        msg[headers.SL_ENVELOPE_FROM] = envelope.mail_from
+        if contact.name:
+            original_from = f"{contact.name} <{contact.website_email}>"
+        else:
+            original_from = contact.website_email
+        msg[headers.SL_ORIGINAL_FROM] = original_from
+    # when an alias isn't in the To: header, there's no way for users to know what alias has received the email
+    msg[headers.SL_ENVELOPE_TO] = alias.email
+
+    if not msg[headers.DATE]:
+        LOG.w("missing date header, create one")
+        msg[headers.DATE] = formatdate()
+
+    replace_sl_message_id_by_original_message_id(msg)
+
+    # change the from_header so the email comes from a reverse-alias
+    # replace the email part in from: header
+    old_from_header = msg[headers.FROM]
+    new_from_header = contact.new_addr()
+    add_or_replace_header(msg, "From", new_from_header)
+    LOG.d("From header, new:%s, old:%s", new_from_header, old_from_header)
     if is_unlisted_sender:
         now = arrow.utcnow()
         diff = (now - contact.created_at).total_seconds() / 3600
@@ -977,49 +1018,6 @@ def forward_email_to_mailbox(
                 add_or_replace_header(msg, "From", encode_text(new_from))
             LOG.d("Unlisted sender: inserted into From for %s -> %s", contact.website_email, alias)
 
-    # create PGP email if needed
-    if mailbox.pgp_enabled() and user.is_premium() and not alias.disable_pgp:
-        LOG.d("Encrypt message using mailbox %s", mailbox)
-
-        try:
-            msg = prepare_pgp_message(
-                msg, mailbox.pgp_finger_print, mailbox.pgp_public_key, can_sign=True
-            )
-        except PGPException:
-            LOG.w(
-                "Cannot encrypt message %s -> %s. %s %s", contact, alias, mailbox, user
-            )
-            msg = add_header(
-                msg,
-                f"""PGP encryption fails with {mailbox.email}'s PGP key""",
-            )
-
-    # add custom header
-    add_or_replace_header(msg, headers.SL_DIRECTION, "Forward")
-
-    msg[headers.SL_EMAIL_LOG_ID] = str(email_log.id)
-    if user.include_header_email_header:
-        msg[headers.SL_ENVELOPE_FROM] = envelope.mail_from
-        if contact.name:
-            original_from = f"{contact.name} <{contact.website_email}>"
-        else:
-            original_from = contact.website_email
-        msg[headers.SL_ORIGINAL_FROM] = original_from
-    # when an alias isn't in the To: header, there's no way for users to know what alias has received the email
-    msg[headers.SL_ENVELOPE_TO] = alias.email
-
-    if not msg[headers.DATE]:
-        LOG.w("missing date header, create one")
-        msg[headers.DATE] = formatdate()
-
-    replace_sl_message_id_by_original_message_id(msg)
-
-    # change the from_header so the email comes from a reverse-alias
-    # replace the email part in from: header
-    old_from_header = msg[headers.FROM]
-    new_from_header = contact.new_addr()
-    add_or_replace_header(msg, "From", new_from_header)
-    LOG.d("From header, new:%s, old:%s", new_from_header, old_from_header)
 
     if len(reply_to_contacts) > 0:
         original_reply_to = get_header_unicode(msg[headers.REPLY_TO])
