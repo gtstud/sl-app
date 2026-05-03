@@ -200,7 +200,7 @@ def generate_user_setting() -> List[UserAliasDeleteAction]:
 
 @pytest.mark.parametrize("user_setting", generate_user_setting())
 def test_delete_mailbox_deletes_alias_with_user_setting(
-    user_setting: UserAliasDeleteAction
+    user_setting: UserAliasDeleteAction,
 ):
     user = create_new_user(alias_delete_action=user_setting)
     mb = Mailbox.create(user_id=user.id, email="ab1@cd.com", verified=True)

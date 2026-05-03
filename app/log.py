@@ -61,7 +61,7 @@ def _get_console_handler():
 def _get_logger(name) -> logging.Logger:
     logger = logging.getLogger(name)
 
-#    logger.setLevel(logging.DEBUG)
+    #    logger.setLevel(logging.DEBUG)
     logger.setLevel(logging.INFO)
 
     # leave the handlers level at NOTSET so the level checking is only handled by the logger

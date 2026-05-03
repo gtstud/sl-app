@@ -290,13 +290,21 @@ def setting():
             marker_in_subject = request.form.get("marker_in_subject")
 
             if enable == "on":
-                current_user.flags = current_user.flags | User.FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT
+                current_user.flags = (
+                    current_user.flags | User.FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT
+                )
                 if marker_in_subject == "on":
-                    current_user.flags = current_user.flags | User.FLAG_MARKER_IN_SUBJECT
+                    current_user.flags = (
+                        current_user.flags | User.FLAG_MARKER_IN_SUBJECT
+                    )
                 else:
-                    current_user.flags = current_user.flags & ~User.FLAG_MARKER_IN_SUBJECT
+                    current_user.flags = (
+                        current_user.flags & ~User.FLAG_MARKER_IN_SUBJECT
+                    )
             else:
-                current_user.flags = current_user.flags & ~User.FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT
+                current_user.flags = (
+                    current_user.flags & ~User.FLAG_AUTO_WHITELIST_ON_FIRST_CONTACT
+                )
                 current_user.flags = current_user.flags & ~User.FLAG_MARKER_IN_SUBJECT
 
             Session.commit()

@@ -1,3 +1,4 @@
+import arrow
 from dataclasses import dataclass
 from operator import or_
 from typing import Optional
@@ -302,7 +303,6 @@ def alias_contact_manager(alias_id):
             + contact_infos
         )
 
-    import arrow
     return render_template(
         "dashboard/alias_contact_manager.html",
         contact_infos=contact_infos,

@@ -35,7 +35,6 @@ import argparse
 import arrow
 from app.email_utils import encode_text
 import email
-import re2 as re
 import uuid
 import logging
 from email import encoders
@@ -619,7 +618,9 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
 
     from_header = get_header_unicode(msg[headers.FROM])
     LOG.d("Create or get contact for from_header:%s", from_header)
-    contact, contact_created = get_or_create_contact(from_header, envelope.mail_from, alias)
+    contact, contact_created = get_or_create_contact(
+        from_header, envelope.mail_from, alias
+    )
     if not contact:
         return [(False, status.E504)]
     alias = (
@@ -752,7 +753,15 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
             # create a copy of message for each forward
             ret.append(
                 forward_email_to_mailbox(
-                    alias, copy(msg), contact, envelope, mailbox, user, reply_to_contact, is_unlisted_sender, contact_created
+                    alias,
+                    copy(msg),
+                    contact,
+                    envelope,
+                    mailbox,
+                    user,
+                    reply_to_contact,
+                    is_unlisted_sender,
+                    contact_created,
                 )
             )
 
@@ -926,7 +935,7 @@ def forward_email_to_mailbox(
 
         def insert_tag_subject(text, tag):
             text = text or ""
-            spaces = [i for i, char in enumerate(text) if char == ' ']
+            spaces = [i for i, char in enumerate(text) if char == " "]
             non_adjacent_spaces = []
             if spaces:
                 non_adjacent_spaces.append(spaces[0])
@@ -944,14 +953,14 @@ def forward_email_to_mailbox(
                 target_idx = -1
 
             if target_idx != -1:
-                return text[:target_idx] + f" {tag} " + text[target_idx+1:].lstrip()
+                return text[:target_idx] + f" {tag} " + text[target_idx + 1 :].lstrip()
             return f"{text} {tag}" if text else f"{tag}"
 
         def insert_tag_from(text, tag):
             text = text or ""
-            idx = text.find(' ')
+            idx = text.find(" ")
             if idx != -1:
-                return text[:idx] + f" {tag} " + text[idx+1:].lstrip()
+                return text[:idx] + f" {tag} " + text[idx + 1 :].lstrip()
             return f"{text} {tag}"
 
         if user.marker_in_subject:
@@ -959,7 +968,11 @@ def forward_email_to_mailbox(
             current_subject = get_header_unicode(current_subject) or ""
             new_subject = insert_tag_subject(current_subject, tag)
             add_or_replace_header(msg, "Subject", encode_text(new_subject))
-            LOG.d("Unlisted sender: inserted into subject for %s -> %s", contact.website_email, alias)
+            LOG.d(
+                "Unlisted sender: inserted into subject for %s -> %s",
+                contact.website_email,
+                alias,
+            )
         else:
             current_from = msg[headers.FROM]
             current_from = get_header_unicode(current_from) or ""
@@ -969,12 +982,16 @@ def forward_email_to_mailbox(
                 new_display_name = insert_tag_from(display_name, tag)
                 # Properly encode display name and reconstruct the From header
                 encoded_display_name = encode_text(new_display_name)
-                new_from = f'{encoded_display_name} <{parsed_from.address}>'
+                new_from = f"{encoded_display_name} <{parsed_from.address}>"
                 add_or_replace_header(msg, "From", new_from)
             else:
                 new_from = insert_tag_from(current_from, tag)
                 add_or_replace_header(msg, "From", encode_text(new_from))
-            LOG.d("Unlisted sender: inserted into From for %s -> %s", contact.website_email, alias)
+            LOG.d(
+                "Unlisted sender: inserted into From for %s -> %s",
+                contact.website_email,
+                alias,
+            )
 
     # create PGP email if needed
     if mailbox.pgp_enabled() and user.is_premium() and not alias.disable_pgp:
@@ -1189,10 +1206,25 @@ def handle_reply(
     current_subject = msg[headers.SUBJECT]
     current_subject = get_header_unicode(current_subject) or ""
 
-    tags = [" ⚠️⚠️ ", " ⚠️ ", " 〰️ ", "⚠️⚠️ ", "⚠️ ", "〰️ ", " ⚠️⚠️", " ⚠️", " 〰️", "⚠️⚠️", "⚠️", "〰️"]
+    tags = [
+        " ⚠️⚠️ ",
+        " ⚠️ ",
+        " 〰️ ",
+        "⚠️⚠️ ",
+        "⚠️ ",
+        "〰️ ",
+        " ⚠️⚠️",
+        " ⚠️",
+        " 〰️",
+        "⚠️⚠️",
+        "⚠️",
+        "〰️",
+    ]
     for t in tags:
         if t in current_subject:
-            current_subject = current_subject.replace(t, " " if t.startswith(" ") and t.endswith(" ") else "")
+            current_subject = current_subject.replace(
+                t, " " if t.startswith(" ") and t.endswith(" ") else ""
+            )
             current_subject = current_subject.strip()
             break
 
@@ -1315,8 +1347,8 @@ def handle_reply(
             if idx != -1 and 8 <= idx <= 18:
                 # Remove the tag and any trailing single space if present
                 new_subject_str = orig_subject_str.replace(tag + " ", "", 1)
-                if tag in new_subject_str: # fallback if there was no space
-                     new_subject_str = orig_subject_str.replace(tag, "", 1)
+                if tag in new_subject_str:  # fallback if there was no space
+                    new_subject_str = orig_subject_str.replace(tag, "", 1)
                 add_or_replace_header(msg, "Subject", new_subject_str)
                 break
 

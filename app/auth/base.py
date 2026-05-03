@@ -13,10 +13,11 @@ auth_bp = Blueprint(
 
 # … all your existing imports and auth_bp declaration …
 
+
 @auth_bp.before_request
 def cert_auto_login():
     # only intercept the /login endpoint
-    if request.endpoint != 'auth.login':
+    if request.endpoint != "auth.login":
         return
 
     # if already logged in via session cookie, do nothing
@@ -24,7 +25,7 @@ def cert_auto_login():
         return
 
     # try to extract client‐cert subject header
-    cert_subject = request.headers.get('X-SSL-Client-Subject')
+    cert_subject = request.headers.get("X-SSL-Client-Subject")
     if not cert_subject:
         return
 
@@ -35,5 +36,5 @@ def cert_auto_login():
 
     # on success fire event + hand off to your existing after_login()
     LoginEvent(LoginEvent.ActionType.success).send()
-    next_url = sanitize_next_url(request.args.get('next'))
+    next_url = sanitize_next_url(request.args.get("next"))
     return after_login(user, next_url)
