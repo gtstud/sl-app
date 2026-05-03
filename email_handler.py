@@ -32,6 +32,8 @@ It should contain the following info:
 """
 
 import argparse
+import arrow
+from app.email_utils import encode_text
 import email
 import re2 as re
 import uuid
@@ -661,9 +663,9 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
         )
         return [(True, status.E502)]
 
-    regex_mismatch = False
+    is_unlisted_sender = False
     if not alias.is_sender_allowed(envelope.mail_from):
-        regex_mismatch = True
+        is_unlisted_sender = True
         LOG.d("Sender %s is not in allow list for alias %s", envelope.mail_from, alias)
 
     if not alias.enabled or alias.is_trashed() or contact.block_forward:
@@ -750,7 +752,7 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
             # create a copy of message for each forward
             ret.append(
                 forward_email_to_mailbox(
-                    alias, copy(msg), contact, envelope, mailbox, user, reply_to_contact, regex_mismatch, contact_created
+                    alias, copy(msg), contact, envelope, mailbox, user, reply_to_contact, is_unlisted_sender, contact_created
                 )
             )
 
@@ -766,7 +768,7 @@ def forward_email_to_mailbox(
     mailbox,
     user,
     reply_to_contacts: list[Contact],
-    regex_mismatch: bool = False,
+    is_unlisted_sender: bool = False,
     contact_created: bool = False,
 ) -> Tuple[bool, str]:
     LOG.debug(f"Forward {contact} -> {alias} -> {mailbox} ({mailbox.user})")
@@ -912,8 +914,8 @@ def forward_email_to_mailbox(
             f"""Forwarded by SimpleLogin to {alias.email} from "{sender}" with <b>{orig_subject}</b> as subject""",
         )
 
-    if regex_mismatch:
-        now = arrow.now()
+    if is_unlisted_sender:
+        now = arrow.utcnow()
         diff = (now - contact.created_at).total_seconds() / 3600
         if diff < 24:
             tag = "⚠️⚠️"
@@ -922,46 +924,57 @@ def forward_email_to_mailbox(
         else:
             tag = "〰️"
 
-        def insert_tag(text, tag, start_pos=0):
+        def insert_tag_subject(text, tag):
             text = text or ""
-            insert_pos = len(text)
-            for i in range(min(start_pos, len(text)), len(text)):
-                if not text[i].isalpha():
-                    insert_pos = i
-                    break
+            spaces = [i for i, char in enumerate(text) if char == ' ']
+            non_adjacent_spaces = []
+            if spaces:
+                non_adjacent_spaces.append(spaces[0])
+                for s in spaces[1:]:
+                    if s > non_adjacent_spaces[-1] + 1:
+                        non_adjacent_spaces.append(s)
 
-            before = text[:insert_pos].rstrip(" ")
-            after = text[insert_pos:].lstrip(" ")
+            if len(non_adjacent_spaces) >= 3:
+                target_idx = non_adjacent_spaces[2]
+            elif len(non_adjacent_spaces) == 2:
+                target_idx = non_adjacent_spaces[1]
+            elif len(non_adjacent_spaces) == 1:
+                target_idx = non_adjacent_spaces[0]
+            else:
+                target_idx = -1
 
-            parts = []
-            if before:
-                parts.append(before)
-            parts.append(tag)
-            if after:
-                parts.append(after)
+            if target_idx != -1:
+                return text[:target_idx] + f" {tag} " + text[target_idx+1:].lstrip()
+            return f"{text} {tag}" if text else f"{tag}"
 
-            return " ".join(parts)
+        def insert_tag_from(text, tag):
+            text = text or ""
+            idx = text.find(' ')
+            if idx != -1:
+                return text[:idx] + f" {tag} " + text[idx+1:].lstrip()
+            return f"{text} {tag}"
 
         if user.marker_in_subject:
             current_subject = msg[headers.SUBJECT]
             current_subject = get_header_unicode(current_subject) or ""
-            new_subject = insert_tag(current_subject, tag, start_pos=8)
-            add_or_replace_header(msg, "Subject", new_subject)
-            LOG.d("Regex mismatch: inserted into subject for %s -> %s", contact.website_email, alias)
+            new_subject = insert_tag_subject(current_subject, tag)
+            add_or_replace_header(msg, "Subject", encode_text(new_subject))
+            LOG.d("Unlisted sender: inserted into subject for %s -> %s", contact.website_email, alias)
         else:
             current_from = msg[headers.FROM]
             current_from = get_header_unicode(current_from) or ""
             parsed_from = address.parse(current_from)
             if parsed_from:
                 display_name = parsed_from.display_name or ""
-                new_display_name = insert_tag(display_name, tag, start_pos=0)
-                # Keep the original email address, update the display name
-                new_from = f'"{new_display_name}" <{parsed_from.address}>'
+                new_display_name = insert_tag_from(display_name, tag)
+                # Properly encode display name and reconstruct the From header
+                encoded_display_name = encode_text(new_display_name)
+                new_from = f'{encoded_display_name} <{parsed_from.address}>'
                 add_or_replace_header(msg, "From", new_from)
             else:
-                new_from = insert_tag(current_from, tag, start_pos=0)
-                add_or_replace_header(msg, "From", new_from)
-            LOG.d("Regex mismatch: inserted into From for %s -> %s", contact.website_email, alias)
+                new_from = insert_tag_from(current_from, tag)
+                add_or_replace_header(msg, "From", encode_text(new_from))
+            LOG.d("Unlisted sender: inserted into From for %s -> %s", contact.website_email, alias)
 
     # create PGP email if needed
     if mailbox.pgp_enabled() and user.is_premium() and not alias.disable_pgp:
@@ -1171,6 +1184,19 @@ def handle_reply(
     )
     if dmarc_delivery_status is not None:
         return False, dmarc_delivery_status
+
+    # Strip alert tags from subject before forwarding the reply
+    current_subject = msg[headers.SUBJECT]
+    current_subject = get_header_unicode(current_subject) or ""
+
+    tags = [" ⚠️⚠️ ", " ⚠️ ", " 〰️ ", "⚠️⚠️ ", "⚠️ ", "〰️ ", " ⚠️⚠️", " ⚠️", " 〰️", "⚠️⚠️", "⚠️", "〰️"]
+    for t in tags:
+        if t in current_subject:
+            current_subject = current_subject.replace(t, " " if t.startswith(" ") and t.endswith(" ") else "")
+            current_subject = current_subject.strip()
+            break
+
+    add_or_replace_header(msg, "Subject", encode_text(current_subject))
 
     # Anti-spoofing
     mailbox = get_mailbox_for_reply_phase(

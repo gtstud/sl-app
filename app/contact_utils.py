@@ -126,7 +126,9 @@ def create_contact(
         )
         
         if is_first_contact and not alias.sender_allow_list and not is_invalid_email and alias.user.auto_whitelist_on_first_contact:
-            domain = email.split('@')[-1]
+            from app.utils import extract_registered_domain
+            target = mail_from if mail_from and mail_from != "<>" else email
+            domain = extract_registered_domain(target)
             if domain:
                 alias.set_sender_allow_domains({domain})
                 Session.add(alias)

@@ -1624,7 +1624,7 @@ class Alias(Base, ModelMixin):
     # the name to use when user replies/sends from alias
     name = sa.Column(sa.String(128), nullable=True, default=None)
 
-    # optional list of domains that must match the sender email. if not matching, email is dropped
+    # optional list of domains to soft-allow sender emails. if not matching, sender receives an alert tag
     sender_allow_list = sa.Column(sa.JSON(), nullable=True, default=None)
 
     enabled = sa.Column(sa.Boolean(), default=True, nullable=False)
@@ -1955,7 +1955,7 @@ class Alias(Base, ModelMixin):
         return set(self.sender_allow_list)
 
     def set_sender_allow_domains(self, domains: set):
-        import tldextract
+        from app.utils import extract_registered_domain
         if not domains:
             self.sender_allow_list = None
             return
@@ -1963,11 +1963,9 @@ class Alias(Base, ModelMixin):
         # Normalise to lowercase and extract registered domains
         extracted_domains = set()
         for d in domains:
-            ext = tldextract.extract(d)
-            if ext.registered_domain:
-                extracted_domains.add(ext.registered_domain.lower())
-            elif ext.domain: # fallback if registered_domain is empty, e.g. for localhost
-                 extracted_domains.add(ext.domain.lower())
+            domain = extract_registered_domain(d)
+            if domain:
+                extracted_domains.add(domain)
 
         if not extracted_domains:
             self.sender_allow_list = None
@@ -1979,11 +1977,8 @@ class Alias(Base, ModelMixin):
         if not self.sender_allow_list:
             return True # implicitly allowed if list is not active
 
-        import tldextract
-        # If it's an email, extract the domain first
-        domain = email_or_domain.split('@')[-1] if '@' in email_or_domain else email_or_domain
-        ext = tldextract.extract(domain)
-        registered_domain = ext.registered_domain.lower() if ext.registered_domain else ext.domain.lower()
+        from app.utils import extract_registered_domain
+        registered_domain = extract_registered_domain(email_or_domain)
 
         return registered_domain in self.sender_allow_list
 
@@ -2162,10 +2157,8 @@ class Contact(Base, ModelMixin):
 
     @property
     def registered_domain(self) -> str:
-        import tldextract
-        domain = self.website_email.split('@')[-1]
-        ext = tldextract.extract(domain)
-        return ext.registered_domain.lower() if ext.registered_domain else ext.domain.lower()
+        from app.utils import extract_registered_domain
+        return extract_registered_domain(self.website_email)
 
     @property
     def ui_tag(self) -> str:
