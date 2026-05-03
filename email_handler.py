@@ -1282,11 +1282,11 @@ def handle_reply(
     if orig_subject:
         orig_subject_str = get_header_unicode(orig_subject) or ""
 
-        # Scan for emojis up to 10 positions from start of subject
+        # Scan for emojis up to 10 positions from start_pos=8 of subject
         # considering "Re:" and similar prefixes
         for tag in ["⚠️⚠️", "⚠️", "〰️"]:
             idx = orig_subject_str.find(tag)
-            if idx != -1 and idx <= 10:
+            if idx != -1 and 8 <= idx <= 18:
                 # Remove the tag and any trailing single space if present
                 new_subject_str = orig_subject_str.replace(tag + " ", "", 1)
                 if tag in new_subject_str: # fallback if there was no space

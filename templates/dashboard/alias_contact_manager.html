@@ -124,7 +124,7 @@
             <div class="col text-right d-flex justify-content-end align-items-center">
               {% set is_explicitly_whitelisted = alias.sender_allow_list and contact.registered_domain in alias.sender_allow_list %}
               <div class="form-check mr-3 mb-0" data-toggle="tooltip" title="{{ 'remove ' + contact.registered_domain + ' from whitelist' if is_explicitly_whitelisted else 'add ' + contact.registered_domain + ' to whitelist' }}">
-                <input type="checkbox" class="toggle-contact-regex form-check-input mt-0" data-contact="{{ contact.id }}" data-contact-domain="{{ contact.registered_domain }}" data-contact-email="{{ contact.website_email }}" data-contact-diff-hours="{{ (arrow.now() - contact.created_at).total_seconds() / 3600 }}" id="whitelist-{{ contact.id }}" {{ "checked" if is_explicitly_whitelisted else "" }} style="position: relative; top: 2px;">
+                <input type="checkbox" class="toggle-contact-regex form-check-input mt-0" data-contact="{{ contact.id }}" data-contact-domain="{{ contact.registered_domain }}" data-contact-email="{{ contact.website_email }}" data-contact-diff-hours="{{ (arrow.utcnow() - contact.created_at).total_seconds() / 3600 if contact.created_at else 0 }}" id="whitelist-{{ contact.id }}" {{ "checked" if is_explicitly_whitelisted else "" }} style="position: relative; top: 2px;">
                 <label class="form-check-label mb-0 cursor" for="whitelist-{{ contact.id }}">Whitelisted:</label>
               </div>
 

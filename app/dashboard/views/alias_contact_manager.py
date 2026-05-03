@@ -302,6 +302,7 @@ def alias_contact_manager(alias_id):
             + contact_infos
         )
 
+    import arrow
     return render_template(
         "dashboard/alias_contact_manager.html",
         contact_infos=contact_infos,
@@ -314,4 +315,5 @@ def alias_contact_manager(alias_id):
         nb_contact=nb_contact,
         can_create_contacts=current_user.can_create_contacts(),
         csrf_form=csrf_form,
+        arrow=arrow,
     )
