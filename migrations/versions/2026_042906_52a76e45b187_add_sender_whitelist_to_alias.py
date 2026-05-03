@@ -1,4 +1,4 @@
-"""Add sender_allow_regex to Alias
+"""Add sender_whitelist to Alias
 
 Revision ID: 52a76e45b187
 Revises: 4a9f8c2e1b3d
