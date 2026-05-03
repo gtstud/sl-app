@@ -519,4 +519,12 @@ def toggle_contact_allow_list(contact_id):
     alias.set_sender_allow_domains(domains)
     Session.commit()
     
-    return jsonify(in_list=in_list, registered_domain=registered_domain), 200
+    is_whitelist_empty = alias.sender_allow_list is None or len(alias.sender_allow_list) == 0
+    whitelisted_domains = alias.sender_allow_list if alias.sender_allow_list else []
+
+    return jsonify(
+        in_list=in_list,
+        registered_domain=registered_domain,
+        is_whitelist_empty=is_whitelist_empty,
+        whitelisted_domains=whitelisted_domains
+    ), 200

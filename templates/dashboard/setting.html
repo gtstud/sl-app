@@ -515,7 +515,7 @@
                         <div id="autowhitelist-options" style="margin-left: 20px; {% if not current_user.auto_whitelist_on_first_contact %}display: none;{% endif %}">
                           <div class="form-check mb-2">
                             <input type="checkbox" id="marker-in-subject" name="marker_in_subject" {% if current_user.marker_in_subject %}checked{% endif %} class="form-check-input">
-                            <label for="marker-in-subject">Tag location [toggle] From/Subject (Off = From, On = Subject)</label>
+                            <label for="marker-in-subject">Place alerts in Subject instead of From</label>
                           </div>
                         </div>
 
@@ -534,13 +534,10 @@
                         function toggleAutowhitelistOptions() {
                           var checkbox = document.getElementById("enable-autowhitelist");
                           var options = document.getElementById("autowhitelist-options");
-                          var populateSection = document.getElementById("populate-whitelist-section");
                           if (checkbox.checked) {
                             options.style.display = "block";
-                            populateSection.style.display = "block";
                           } else {
                             options.style.display = "none";
-                            populateSection.style.display = "none";
                           }
                         }
                       </script>

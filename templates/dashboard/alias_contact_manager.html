@@ -113,7 +113,7 @@
         <div class="my-2 p-2 card {% if contact.id == highlight_contact_id %}highlight-row{% endif %}">
           <div class="mb-2 row">
             <div class="col">
-              <span class="font-weight-bold">{{ contact.website_email }}</span>
+              <span class="font-weight-bold">{{ contact.website_email }}</span><span class="regex-label-{{ contact.id }} ml-1">{{ contact.ui_tag }}</span>
               {% if contact.pgp_finger_print %}
 
                 <span class="cursor"
@@ -122,13 +122,11 @@
               {% endif %}
             </div>
             <div class="col text-right d-flex justify-content-end align-items-center">
-              <label class="custom-switch cursor mr-3" data-toggle="tooltip" title="{{ 'remove ' + contact.registered_domain + ' from whitelist' if contact.domain_in_allow_list else 'whitelist ' + contact.registered_domain }}" style="padding-left: 0px">
-                <span class="custom-switch-description regex-label-{{ contact.id }} mr-2" style="margin-left: 0;">
-                  {{ contact.ui_tag }}
-                </span>
-                <input type="checkbox" class="toggle-contact-regex custom-switch-input" data-contact="{{ contact.id }}" data-contact-email="{{ contact.website_email }}" {{ "checked" if contact.domain_in_allow_list else "" }}>
-                <span class="custom-switch-indicator"></span>
-              </label>
+              {% set is_explicitly_whitelisted = alias.sender_allow_list and contact.registered_domain in alias.sender_allow_list %}
+              <div class="form-check mr-3 mb-0" data-toggle="tooltip" title="{{ 'remove ' + contact.registered_domain + ' from whitelist' if is_explicitly_whitelisted else 'add ' + contact.registered_domain + ' to whitelist' }}">
+                <input type="checkbox" class="toggle-contact-regex form-check-input mt-0" data-contact="{{ contact.id }}" data-contact-domain="{{ contact.registered_domain }}" data-contact-email="{{ contact.website_email }}" data-contact-diff-hours="{{ (arrow.now() - contact.created_at).total_seconds() / 3600 }}" id="whitelist-{{ contact.id }}" {{ "checked" if is_explicitly_whitelisted else "" }} style="position: relative; top: 2px;">
+                <label class="form-check-label mb-0 cursor" for="whitelist-{{ contact.id }}">Whitelisted:</label>
+              </div>
 
               <label class="custom-switch cursor" data-toggle="tooltip" {% if contact.block_forward %}
                  title="Unblock sender - start receiving emails from this sender" {% else %} title="Block sender - stop receiving emails from this sender" {% endif %} style="padding-left: 0px">
@@ -304,13 +302,49 @@
 
         if (res.ok) {
           let json = await res.json();
-          let registeredDomain = json.registered_domain;
+          let whitelistedDomains = json.whitelisted_domains || [];
+          let isWhitelistEmpty = json.is_whitelist_empty;
           
-          // we need to reload the page to get the correct age-based tags
-          // if we try to do it client side we don't know the exact creation dates
-          // or we could just do a simple reload or update the tooltip and checkmark
-          window.location.reload();
+          $(".toggle-contact-regex").each(function() {
+            let el = $(this);
+            let cid = el.data("contact");
+            let cdomain = el.data("contact-domain");
+            let diffHours = parseFloat(el.data("contact-diff-hours"));
+            let isWhitelisted = whitelistedDomains.includes(cdomain);
 
+            // Uncheck all if whitelist is empty, otherwise check if domain is in whitelist
+            el.prop("checked", isWhitelisted && !isWhitelistEmpty);
+
+            // Update tooltip
+            let tooltipDiv = el.closest('[data-toggle="tooltip"]');
+            if (isWhitelisted && !isWhitelistEmpty) {
+              tooltipDiv.attr('title', `remove ${cdomain} from whitelist`);
+              tooltipDiv.attr('data-original-title', `remove ${cdomain} from whitelist`);
+            } else {
+              tooltipDiv.attr('title', `add ${cdomain} to whitelist`);
+              tooltipDiv.attr('data-original-title', `add ${cdomain} to whitelist`);
+            }
+            // re-initialize tooltip (if using bootstrap)
+            if (typeof $.fn.tooltip !== 'undefined') {
+              tooltipDiv.tooltip('dispose').tooltip();
+            }
+
+            // Update ui_tag
+            let uiTagSpan = $(`.regex-label-${cid}`);
+            if (isWhitelistEmpty) {
+              uiTagSpan.text("");
+            } else if (isWhitelisted) {
+              uiTagSpan.text("✅");
+            } else {
+              if (diffHours < 24) {
+                uiTagSpan.text("⚠️⚠️");
+              } else if (diffHours < 192) {
+                uiTagSpan.text("⚠️");
+              } else {
+                uiTagSpan.text("〰️");
+              }
+            }
+          });
         } else {
           toastr.error("Sorry for the inconvenience! Could you refresh the page & retry please?", "Unknown Error");
           that.prop("checked", !that.prop("checked"));
