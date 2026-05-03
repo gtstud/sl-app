@@ -2169,7 +2169,9 @@ class Contact(Base, ModelMixin):
 
     @property
     def ui_tag(self) -> str:
-        if not self.alias.sender_allow_list or self.domain_in_allow_list:
+        if not self.alias.sender_allow_list:
+            return ""
+        if self.domain_in_allow_list:
             return "✅"
         now = arrow.now()
         diff = (now - self.created_at).total_seconds() / 3600

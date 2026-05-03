@@ -1278,6 +1278,22 @@ def handle_reply(
     if config.DROP_PGP_KEY_ATTACHMENTS_ON_REPLY:
         msg = remove_sender_pgp_key_attachment(msg)
 
+    orig_subject = msg[headers.SUBJECT]
+    if orig_subject:
+        orig_subject_str = get_header_unicode(orig_subject) or ""
+
+        # Scan for emojis up to 10 positions from start of subject
+        # considering "Re:" and similar prefixes
+        for tag in ["⚠️⚠️", "⚠️", "〰️"]:
+            idx = orig_subject_str.find(tag)
+            if idx != -1 and idx <= 10:
+                # Remove the tag and any trailing single space if present
+                new_subject_str = orig_subject_str.replace(tag + " ", "", 1)
+                if tag in new_subject_str: # fallback if there was no space
+                     new_subject_str = orig_subject_str.replace(tag, "", 1)
+                add_or_replace_header(msg, "Subject", new_subject_str)
+                break
+
     orig_to = msg[headers.TO]
     orig_cc = msg[headers.CC]
 
