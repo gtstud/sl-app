@@ -309,6 +309,12 @@
           let whitelistedDomains = json.whitelisted_domains || [];
           let isWhitelistEmpty = json.is_whitelist_empty;
           
+          if (json.in_list) {
+            toastr.success(`${json.registered_domain} is whitelisted`);
+          } else {
+            toastr.success(`${json.registered_domain} is un-whitelisted`);
+          }
+
           $(".toggle-contact-regex").each(function() {
             let el = $(this);
             let cid = el.data("contact");
