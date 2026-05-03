@@ -4,13 +4,19 @@ import string
 import urllib.parse
 from functools import wraps
 from typing import List, Optional
-
 import time
 from flask_wtf import FlaskForm
 from unidecode import unidecode
 
+import tldextract
 from .config import WORDS_FILE_PATH, ALLOWED_REDIRECT_DOMAINS
 from .log import LOG
+
+def extract_registered_domain(email_or_domain: str) -> str:
+    domain = email_or_domain.split('@')[-1] if '@' in email_or_domain else email_or_domain
+    ext = tldextract.extract(domain)
+    return ext.registered_domain.lower() if ext.registered_domain else ext.domain.lower()
+
 
 with open(WORDS_FILE_PATH) as f:
     LOG.d("load words file: %s", WORDS_FILE_PATH)
