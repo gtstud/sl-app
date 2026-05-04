@@ -914,11 +914,13 @@ def forward_email_to_mailbox(
         )
 
     if regex_mismatch:
-        now = arrow.now()
+        now = arrow.utcnow()
         diff = (now - contact.created_at).total_seconds() / 3600
-        if diff < 24:
+        emails_count = EmailLog.filter_by(contact_id=contact.id).count()
+
+        if diff < 24 or emails_count <= 2:
             tag = "⚠️⚠️"
-        elif diff < 192:
+        elif diff < 192 or emails_count <= 5:
             tag = "⚠️"
         else:
             tag = "〰️"

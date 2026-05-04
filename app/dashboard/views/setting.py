@@ -303,7 +303,6 @@ def setting():
             flash("Your preference has been updated", "success")
             return redirect(url_for("dashboard.setting") + "#autowhitelist")
         elif request.form.get("form-name") == "populate-whitelist":
-            import tldextract
             from collections import Counter
             from app.models import Alias, Contact
 
@@ -315,8 +314,7 @@ def setting():
                     if contacts:
                         domains = []
                         for contact in contacts:
-                            ext = tldextract.extract(contact.website_email.split('@')[-1])
-                            registered_domain = ext.registered_domain.lower() if ext.registered_domain else ext.domain.lower()
+                            registered_domain = contact.registered_domain
                             if registered_domain:
                                 domains.append(registered_domain)
 
