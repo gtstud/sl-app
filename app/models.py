@@ -686,9 +686,7 @@ class User(Base, ModelMixin, UserMixin, PasswordOracle):
 
     @property
     def marker_in_subject(self) -> bool:
-        return User.FLAG_MARKER_IN_SUBJECT == (
-            self.flags & User.FLAG_MARKER_IN_SUBJECT
-        )
+        return User.FLAG_MARKER_IN_SUBJECT == (self.flags & User.FLAG_MARKER_IN_SUBJECT)
 
     @staticmethod
     def subdomain_is_available():
@@ -1956,10 +1954,11 @@ class Alias(Base, ModelMixin):
 
     def set_sender_allow_domains(self, domains: set):
         from app.utils import get_registered_domain
+
         if not domains:
             self.sender_allow_list = None
             return
-        
+
         # Normalise to lowercase and extract registered domains
         extracted_domains = set()
         for d in domains:
@@ -1975,9 +1974,10 @@ class Alias(Base, ModelMixin):
 
     def is_sender_allowed(self, email_or_domain: str) -> bool:
         if not self.sender_allow_list:
-            return True # implicitly allowed if list is not active
+            return True  # implicitly allowed if list is not active
 
         from app.utils import get_registered_domain
+
         registered_domain = get_registered_domain(email_or_domain)
 
         return registered_domain in self.sender_allow_list
@@ -2158,7 +2158,12 @@ class Contact(Base, ModelMixin):
     @property
     def registered_domain(self) -> str:
         from app.utils import get_registered_domain
-        email_to_extract = self.mail_from if self.mail_from and self.mail_from != "<>" else self.website_email
+
+        email_to_extract = (
+            self.mail_from
+            if self.mail_from and self.mail_from != "<>"
+            else self.website_email
+        )
         return get_registered_domain(email_to_extract)
 
     @property

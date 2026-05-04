@@ -490,6 +490,7 @@ def toggle_contact(contact_id):
 
     return jsonify(block_forward=contact.block_forward), 200
 
+
 @api_bp.route("/contacts/<int:contact_id>/toggle_allow_list", methods=["POST"])
 @require_api_auth
 def toggle_contact_allow_list(contact_id):
@@ -504,7 +505,7 @@ def toggle_contact_allow_list(contact_id):
 
     alias = contact.alias
     registered_domain = contact.registered_domain
-    
+
     domains = alias.get_sender_allow_domains()
     if registered_domain in domains:
         domains.remove(registered_domain)
@@ -512,16 +513,18 @@ def toggle_contact_allow_list(contact_id):
     else:
         domains.add(registered_domain)
         in_list = True
-        
+
     alias.set_sender_allow_domains(domains)
     Session.commit()
-    
-    is_whitelist_empty = alias.sender_allow_list is None or len(alias.sender_allow_list) == 0
+
+    is_whitelist_empty = (
+        alias.sender_allow_list is None or len(alias.sender_allow_list) == 0
+    )
     whitelisted_domains = alias.sender_allow_list if alias.sender_allow_list else []
 
     return jsonify(
         in_list=in_list,
         registered_domain=registered_domain,
         is_whitelist_empty=is_whitelist_empty,
-        whitelisted_domains=whitelisted_domains
+        whitelisted_domains=whitelisted_domains,
     ), 200

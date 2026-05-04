@@ -33,7 +33,6 @@ It should contain the following info:
 
 import argparse
 import email
-import re2 as re
 import uuid
 import logging
 import arrow
@@ -618,7 +617,9 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
 
     from_header = get_header_unicode(msg[headers.FROM])
     LOG.d("Create or get contact for from_header:%s", from_header)
-    contact, contact_created = get_or_create_contact(from_header, envelope.mail_from, alias)
+    contact, contact_created = get_or_create_contact(
+        from_header, envelope.mail_from, alias
+    )
     if not contact:
         return [(False, status.E504)]
     alias = (
@@ -751,7 +752,15 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
             # create a copy of message for each forward
             ret.append(
                 forward_email_to_mailbox(
-                    alias, copy(msg), contact, envelope, mailbox, user, reply_to_contact, regex_mismatch, contact_created
+                    alias,
+                    copy(msg),
+                    contact,
+                    envelope,
+                    mailbox,
+                    user,
+                    reply_to_contact,
+                    regex_mismatch,
+                    contact_created,
                 )
             )
 
@@ -950,7 +959,11 @@ def forward_email_to_mailbox(
             current_subject = get_header_unicode(current_subject) or ""
             new_subject = insert_tag(current_subject, tag, start_pos=8)
             add_or_replace_header(msg, "Subject", new_subject)
-            LOG.d("Regex mismatch: inserted into subject for %s -> %s", contact.website_email, alias)
+            LOG.d(
+                "Regex mismatch: inserted into subject for %s -> %s",
+                contact.website_email,
+                alias,
+            )
         else:
             current_from = msg[headers.FROM]
             current_from = get_header_unicode(current_from) or ""
@@ -964,7 +977,11 @@ def forward_email_to_mailbox(
             else:
                 new_from = insert_tag(current_from, tag, start_pos=0)
                 add_or_replace_header(msg, "From", new_from)
-            LOG.d("Regex mismatch: inserted into From for %s -> %s", contact.website_email, alias)
+            LOG.d(
+                "Regex mismatch: inserted into From for %s -> %s",
+                contact.website_email,
+                alias,
+            )
 
     # create PGP email if needed
     if mailbox.pgp_enabled() and user.is_premium() and not alias.disable_pgp:
@@ -1292,8 +1309,8 @@ def handle_reply(
             if idx != -1 and 8 <= idx <= 18:
                 # Remove the tag and any trailing single space if present
                 new_subject_str = orig_subject_str.replace(tag + " ", "", 1)
-                if tag in new_subject_str: # fallback if there was no space
-                     new_subject_str = orig_subject_str.replace(tag, "", 1)
+                if tag in new_subject_str:  # fallback if there was no space
+                    new_subject_str = orig_subject_str.replace(tag, "", 1)
                 add_or_replace_header(msg, "Subject", new_subject_str)
                 break
 
