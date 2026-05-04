@@ -20,10 +20,17 @@ from sqlalchemy.exc import SQLAlchemyError
 
 # Import only what we need from SimpleLogin
 from app.db import Session
-from app.models import (Alias, User, BlockBehaviourEnum)
+from app.models import (Alias, User, BlockBehaviourEnum, VerpType)
 from app.alias_utils import try_auto_create
-from app.email_utils import is_reverse_alias
+from app.email_utils import is_reverse_alias, get_verp_info_from_email
 from app.log import LOG
+from app.config import (
+    BOUNCE_PREFIX,
+    BOUNCE_SUFFIX,
+    TRANSACTIONAL_BOUNCE_PREFIX,
+    TRANSACTIONAL_BOUNCE_SUFFIX,
+    BOUNCE_PREFIX_FOR_REPLY_PHASE,
+)
 
 # Socket configuration
 SOCKET_NAME = 'simplelogin_policy'
@@ -91,6 +98,32 @@ def process_request(client_socket, request_data):
             if is_reverse_alias(recipient):
                 elapsed = time.time() - start
                 LOG.i(f"Policy ACCEPT: recipient is reverse alias from={sender} to={recipient} time={elapsed:.3f}s")
+                client_socket.sendall(b"action=DUNNO\n\n")
+                return
+
+            # Step 1.5: detect if the recipient is a VERP bounce address
+            # (Matches logic in email_handler.py)
+            verp_info = get_verp_info_from_email(recipient)
+            is_verp = False
+
+            # Transactional VERP
+            if (recipient.startswith(TRANSACTIONAL_BOUNCE_PREFIX) and recipient.endswith(TRANSACTIONAL_BOUNCE_SUFFIX)) or \
+               (verp_info and verp_info[0] == VerpType.transactional):
+                is_verp = True
+
+            # Forward VERP
+            elif (recipient.startswith(BOUNCE_PREFIX) and recipient.endswith(BOUNCE_SUFFIX)) or \
+                 (verp_info and verp_info[0] == VerpType.bounce_forward):
+                is_verp = True
+
+            # Reply VERP
+            elif recipient.startswith(f"{BOUNCE_PREFIX_FOR_REPLY_PHASE}+") or \
+                 (verp_info and verp_info[0] == VerpType.bounce_reply):
+                is_verp = True
+
+            if is_verp:
+                elapsed = time.time() - start
+                LOG.i(f"Policy ACCEPT: recipient is VERP bounce address from={sender} to={recipient} time={elapsed:.3f}s")
                 client_socket.sendall(b"action=DUNNO\n\n")
                 return
 
