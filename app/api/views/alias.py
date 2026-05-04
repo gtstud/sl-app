@@ -502,11 +502,8 @@ def toggle_contact_allow_list(contact_id):
     if not contact or contact.alias.user_id != user.id:
         return jsonify(error="Forbidden"), 403
 
-    import tldextract
     alias = contact.alias
-    domain = contact.website_email.split('@')[-1]
-    ext = tldextract.extract(domain)
-    registered_domain = ext.registered_domain.lower() if ext.registered_domain else ext.domain.lower()
+    registered_domain = contact.registered_domain
     
     domains = alias.get_sender_allow_domains()
     if registered_domain in domains:
