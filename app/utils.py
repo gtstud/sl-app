@@ -29,9 +29,13 @@ def get_registered_domain(email_or_domain: str) -> str:
     """Extract the registered domain from an email address or domain string."""
     import tldextract
 
-    domain = email_or_domain.split("@")[-1] if "@" in email_or_domain else email_or_domain
+    domain = (
+        email_or_domain.split("@")[-1] if "@" in email_or_domain else email_or_domain
+    )
     ext = tldextract.extract(domain)
-    return ext.registered_domain.lower() if ext.registered_domain else ext.domain.lower()
+    return (
+        ext.registered_domain.lower() if ext.registered_domain else ext.domain.lower()
+    )
 
 
 def random_words(words: int = 2, numbers: int = 0):
