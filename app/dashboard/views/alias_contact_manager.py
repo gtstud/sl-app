@@ -303,6 +303,7 @@ def alias_contact_manager(alias_id):
         )
 
     import arrow
+
     return render_template(
         "dashboard/alias_contact_manager.html",
         contact_infos=contact_infos,

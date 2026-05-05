@@ -41,6 +41,8 @@ from email.encoders import encode_noop
 from email.message import Message
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
+from email.header import Header
+from email.utils import formataddr
 from email.utils import make_msgid, formatdate, getaddresses
 from io import BytesIO
 from smtplib import SMTPRecipientsRefused, SMTPServerDisconnected
@@ -941,8 +943,8 @@ def forward_email_to_mailbox(
 
             non_consec_space_indexes = []
             for i, char in enumerate(text):
-                if char == ' ':
-                    if i == 0 or text[i-1] != ' ':
+                if char == " ":
+                    if i == 0 or text[i - 1] != " ":
                         non_consec_space_indexes.append(i)
 
             if len(non_consec_space_indexes) >= 3:
@@ -954,7 +956,7 @@ def forward_email_to_mailbox(
             else:
                 return text + tag
 
-            return text[:target_idx] + f" {tag} " + text[target_idx+1:]
+            return text[:target_idx] + f" {tag} " + text[target_idx + 1 :]
 
         def insert_tag_from(text, tag):
             text = text or ""
@@ -963,13 +965,13 @@ def forward_email_to_mailbox(
 
             non_consec_space_indexes = []
             for i, char in enumerate(text):
-                if char == ' ':
-                    if i == 0 or text[i-1] != ' ':
+                if char == " ":
+                    if i == 0 or text[i - 1] != " ":
                         non_consec_space_indexes.append(i)
 
             if non_consec_space_indexes:
                 target_idx = non_consec_space_indexes[0]
-                return text[:target_idx] + f" {tag} " + text[target_idx+1:]
+                return text[:target_idx] + f" {tag} " + text[target_idx + 1 :]
             else:
                 return text + tag
 
@@ -979,7 +981,7 @@ def forward_email_to_mailbox(
             new_subject = insert_tag_subject(current_subject, tag)
 
             # encode using utf-8 pattern
-            new_subject_encoded = Header(new_subject, 'utf-8').encode()
+            new_subject_encoded = Header(new_subject, "utf-8").encode()
             add_or_replace_header(msg, "Subject", new_subject_encoded)
             LOG.d(
                 "Whitelist mismatch: inserted into subject for %s -> %s",
@@ -990,7 +992,9 @@ def forward_email_to_mailbox(
             current_from = msg.get(headers.FROM)
             if current_from:
                 try:
-                    display_name, email_address = parse_full_address(get_header_unicode(current_from))
+                    display_name, email_address = parse_full_address(
+                        get_header_unicode(current_from)
+                    )
                 except ValueError:
                     display_name, email_address = "", get_header_unicode(current_from)
             else:
@@ -999,7 +1003,7 @@ def forward_email_to_mailbox(
             new_display_name = insert_tag_from(display_name, tag)
 
             # encode using utf-8 pattern and format
-            encoded_name = Header(new_display_name, 'utf-8').encode()
+            encoded_name = Header(new_display_name, "utf-8").encode()
             new_from_value = formataddr((encoded_name, email_address))
             add_or_replace_header(msg, "From", new_from_value)
             LOG.d(
