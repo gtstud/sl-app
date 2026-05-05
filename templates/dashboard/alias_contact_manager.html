@@ -113,7 +113,7 @@
         <div class="my-2 p-2 card {% if contact.id == highlight_contact_id %}highlight-row{% endif %}">
           <div class="mb-2 row">
             <div class="col">
-              <span class="font-weight-bold">{{ contact.website_email }}</span><span class="regex-label-{{ contact.id }} ml-1">{{ contact.ui_tag }}</span>
+              <span class="font-weight-bold">{{ contact.website_email }}</span><span class="whitelist-label-{{ contact.id }} ml-1">{{ contact.ui_tag }}</span>
               {% if contact.pgp_finger_print %}
 
                 <span class="cursor"
@@ -147,7 +147,7 @@
               {% set is_explicitly_whitelisted = alias.sender_allow_list and contact.registered_domain in alias.sender_allow_list %}
               <label class="mb-0 mr-2 cursor" for="whitelist-{{ contact.id }}">Whitelisted:</label>
               <label class="custom-switch cursor mb-0" data-toggle="tooltip" title="{{ 'remove ' + contact.registered_domain + ' from whitelist' if is_explicitly_whitelisted else 'add ' + contact.registered_domain + ' to whitelist' }}" style="padding-left: 0px">
-                <input type="checkbox" class="toggle-contact-regex custom-switch-input" data-contact="{{ contact.id }}" data-contact-domain="{{ contact.registered_domain }}" data-contact-email="{{ contact.website_email }}" data-contact-diff-hours="{{ (arrow.utcnow() - contact.created_at).total_seconds() / 3600 if contact.created_at else 0 }}" id="whitelist-{{ contact.id }}" {{ "checked" if is_explicitly_whitelisted else "" }}>
+                <input type="checkbox" class="toggle-contact-whitelist custom-switch-input" data-contact="{{ contact.id }}" data-contact-domain="{{ contact.registered_domain }}" data-contact-email="{{ contact.website_email }}" data-contact-diff-hours="{{ (arrow.utcnow() - contact.created_at).total_seconds() / 3600 if contact.created_at else 0 }}" id="whitelist-{{ contact.id }}" {{ "checked" if is_explicitly_whitelisted else "" }}>
                 <span class="custom-switch-indicator"></span>
               </label>
             </div>
@@ -290,7 +290,7 @@
       }
     }
 
-    $(".toggle-contact-regex").change(async function () {
+    $(".toggle-contact-whitelist").change(async function () {
       let contactID = $(this).data("contact");
       let contactEmail = $(this).data("contact-email");
       let that = $(this);
@@ -315,7 +315,7 @@
             toastr.success(`${json.registered_domain} is un-whitelisted`);
           }
 
-          $(".toggle-contact-regex").each(function() {
+          $(".toggle-contact-whitelist").each(function() {
             let el = $(this);
             let cid = el.data("contact");
             let cdomain = el.data("contact-domain");
@@ -340,7 +340,7 @@
             }
 
             // Update ui_tag
-            let uiTagSpan = $(`.regex-label-${cid}`);
+            let uiTagSpan = $(`.whitelist-label-${cid}`);
             if (isWhitelistEmpty) {
               uiTagSpan.text("");
             } else if (isWhitelisted) {
