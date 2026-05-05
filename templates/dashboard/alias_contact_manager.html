@@ -14,9 +14,20 @@
            href="#howtouse"
            role="button"
            aria-expanded="false"
-           aria-controls="collapseExample">
+           aria-controls="howtouse">
           How to use <i class="fe fe-chevrons-down"></i>
         </a>
+        {% if whitelisted_domains %}
+          <a class="ml-3 text-info"
+             style="font-size: 12px"
+             data-toggle="collapse"
+             href="#domainwhitelist"
+             role="button"
+             aria-expanded="false"
+             aria-controls="domainwhitelist">
+            domain whitelist <i class="fe fe-chevrons-down"></i>
+          </a>
+        {% endif %}
       </h1>
       <div class="alert alert-primary collapse" id="howtouse" role="alert">
         <p>
@@ -57,6 +68,18 @@
           </a>
         </p>
       </div>
+      {% if whitelisted_domains %}
+        <div class="alert alert-secondary collapse" id="domainwhitelist" role="alert">
+          <p>The following domains are currently whitelisted for this alias:</p>
+          <div style="column-count: 3; column-gap: 20px;">
+            <ul style="list-style-type: none; padding: 0; margin: 0;">
+              {% for domain in whitelisted_domains %}
+                <li>{{ domain }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        </div>
+      {% endif %}
     </div>
   </div>
   {% if can_create_contacts %}

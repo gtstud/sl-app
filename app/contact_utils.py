@@ -171,3 +171,32 @@ def contact_toggle_block(contact: Contact) -> Contact:
     )
     Session.commit()
     LOG.i(f"Updated contact {contact} blocked state to {contact.block_forward}")
+
+
+def perform_contact_deletion_with_whitelist_check(contact: Contact):
+    alias = contact.alias
+    contact_id = contact.id
+    contact_email = contact.email
+    registered_domain = contact.registered_domain
+
+    emit_alias_audit_log(
+        alias=alias,
+        action=AliasAuditLogAction.DeleteContact,
+        message=f"Deleted contact {contact_id} ({contact_email})",
+    )
+    Contact.delete(contact_id)
+    Session.commit()
+
+    # Check if domain was whitelisted and if it's the last contact for that domain
+    domains = alias.get_sender_allow_domains()
+    if domains and registered_domain in domains:
+        other_contact = Contact.filter_by(alias_id=alias.id).filter(Contact.id != contact_id).all()
+        if not any(c.registered_domain == registered_domain for c in other_contact):
+            domains.remove(registered_domain)
+            alias.set_sender_allow_domains(domains)
+            emit_alias_audit_log(
+                alias=alias,
+                action=AliasAuditLogAction.UpdateAlias,
+                message=f"Auto-removed {registered_domain} from allow list since last contact was deleted",
+            )
+            Session.commit()

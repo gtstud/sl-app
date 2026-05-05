@@ -627,6 +627,48 @@ def test_delete_contact(flask_client):
     assert r.json == {"deleted": True}
 
 
+def test_delete_contact_with_whitelist(flask_client):
+    user, api_key = get_new_user_and_api_key()
+
+    alias = Alias.create_new_random(user)
+    alias.sender_allow_list = ["example.com"]
+    Session.commit()
+
+    contact = Contact.create(
+        alias_id=alias.id,
+        website_email="contact@example.com",
+        reply_email="reply+random@sl.io",
+        user_id=alias.user_id,
+    )
+
+    contact2 = Contact.create(
+        alias_id=alias.id,
+        website_email="other@example.com",
+        reply_email="reply+random2@sl.io",
+        user_id=alias.user_id,
+    )
+    Session.commit()
+
+    # Delete the first contact. Domain should remain whitelisted because of contact2.
+    r = flask_client.delete(
+        url_for("api.delete_contact", contact_id=contact.id),
+        headers={"Authentication": api_key.code},
+    )
+
+    assert r.status_code == 200
+    assert "example.com" in alias.sender_allow_list
+
+    # Delete the second contact. Domain should be un-whitelisted since it's the last contact.
+    r = flask_client.delete(
+        url_for("api.delete_contact", contact_id=contact2.id),
+        headers={"Authentication": api_key.code},
+    )
+
+    assert r.status_code == 200
+    # After deleting both, the domain should no longer be whitelisted
+    assert alias.sender_allow_list is None or "example.com" not in alias.sender_allow_list
+
+
 def test_get_alias(flask_client):
     user, api_key = get_new_user_and_api_key()
 
