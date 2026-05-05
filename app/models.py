@@ -2153,7 +2153,12 @@ class Contact(Base, ModelMixin):
 
     @property
     def domain_in_allow_list(self) -> bool:
-        return self.alias.is_sender_allowed(self.website_email)
+        email_to_check = (
+            self.mail_from
+            if self.mail_from and self.mail_from != "<>"
+            else self.website_email
+        )
+        return self.alias.is_sender_allowed(email_to_check)
 
     @property
     def registered_domain(self) -> str:
