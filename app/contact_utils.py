@@ -131,11 +131,7 @@ def create_contact(
             and not is_invalid_email
             and alias.user.auto_whitelist_on_first_contact
         ):
-            email_to_extract = (
-                mail_from
-                if mail_from and mail_from != "<>"
-                else email
-            )
+            email_to_extract = mail_from if mail_from and mail_from != "<>" else email
             domain = email_to_extract.split("@")[-1]
             if domain:
                 alias.set_sender_allow_domains({domain})

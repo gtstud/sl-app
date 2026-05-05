@@ -28,7 +28,7 @@ def upgrade():
             print(">>> pg_trgm already loaded, ignore")
             op.execute("Rollback")
 
-    op.create_index('note_pg_trgm_index', 'alias', ['note'], unique=False, postgresql_ops={'note': 'gin_trgm_ops'}, postgresql_using='gin')
+    pass
     # ### end Alembic commands ###
 
 
