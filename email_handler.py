@@ -663,9 +663,9 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
         )
         return [(True, status.E502)]
 
-    regex_mismatch = False
+    whitelist_mismatch = False
     if not alias.is_sender_allowed(envelope.mail_from):
-        regex_mismatch = True
+        whitelist_mismatch = True
         LOG.d("Sender %s is not in allow list for alias %s", envelope.mail_from, alias)
 
     if not alias.enabled or alias.is_trashed() or contact.block_forward:
@@ -759,7 +759,7 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
                     mailbox,
                     user,
                     reply_to_contact,
-                    regex_mismatch,
+                    whitelist_mismatch,
                     contact_created,
                 )
             )
@@ -776,7 +776,7 @@ def forward_email_to_mailbox(
     mailbox,
     user,
     reply_to_contacts: list[Contact],
-    regex_mismatch: bool = False,
+    whitelist_mismatch: bool = False,
     contact_created: bool = False,
 ) -> Tuple[bool, str]:
     LOG.debug(f"Forward {contact} -> {alias} -> {mailbox} ({mailbox.user})")
@@ -922,7 +922,7 @@ def forward_email_to_mailbox(
             f"""Forwarded by SimpleLogin to {alias.email} from "{sender}" with <b>{orig_subject}</b> as subject""",
         )
 
-    if regex_mismatch:
+    if whitelist_mismatch:
         now = arrow.utcnow()
         diff = (now - contact.created_at).total_seconds() / 3600
         emails_count = EmailLog.filter_by(contact_id=contact.id).count()
@@ -934,51 +934,76 @@ def forward_email_to_mailbox(
         else:
             tag = "〰️"
 
-        def insert_tag(text, tag, start_pos=0):
+        def insert_tag_subject(text, tag):
             text = text or ""
-            insert_pos = len(text)
-            for i in range(min(start_pos, len(text)), len(text)):
-                if not text[i].isalpha():
-                    insert_pos = i
-                    break
+            if not text:
+                return tag
 
-            before = text[:insert_pos].rstrip(" ")
-            after = text[insert_pos:].lstrip(" ")
+            non_consec_space_indexes = []
+            for i, char in enumerate(text):
+                if char == ' ':
+                    if i == 0 or text[i-1] != ' ':
+                        non_consec_space_indexes.append(i)
 
-            parts = []
-            if before:
-                parts.append(before)
-            parts.append(tag)
-            if after:
-                parts.append(after)
+            if len(non_consec_space_indexes) >= 3:
+                target_idx = non_consec_space_indexes[2]
+            elif len(non_consec_space_indexes) >= 2:
+                target_idx = non_consec_space_indexes[1]
+            elif len(non_consec_space_indexes) >= 1:
+                target_idx = non_consec_space_indexes[0]
+            else:
+                return text + tag
 
-            return " ".join(parts)
+            return text[:target_idx] + f" {tag} " + text[target_idx+1:]
+
+        def insert_tag_from(text, tag):
+            text = text or ""
+            if not text:
+                return tag
+
+            non_consec_space_indexes = []
+            for i, char in enumerate(text):
+                if char == ' ':
+                    if i == 0 or text[i-1] != ' ':
+                        non_consec_space_indexes.append(i)
+
+            if non_consec_space_indexes:
+                target_idx = non_consec_space_indexes[0]
+                return text[:target_idx] + f" {tag} " + text[target_idx+1:]
+            else:
+                return text + tag
 
         if user.marker_in_subject:
             current_subject = msg[headers.SUBJECT]
             current_subject = get_header_unicode(current_subject) or ""
-            new_subject = insert_tag(current_subject, tag, start_pos=8)
-            add_or_replace_header(msg, "Subject", new_subject)
+            new_subject = insert_tag_subject(current_subject, tag)
+
+            # encode using utf-8 pattern
+            new_subject_encoded = Header(new_subject, 'utf-8').encode()
+            add_or_replace_header(msg, "Subject", new_subject_encoded)
             LOG.d(
-                "Regex mismatch: inserted into subject for %s -> %s",
+                "Whitelist mismatch: inserted into subject for %s -> %s",
                 contact.website_email,
                 alias,
             )
         else:
-            current_from = msg[headers.FROM]
-            current_from = get_header_unicode(current_from) or ""
-            parsed_from = address.parse(current_from)
-            if parsed_from:
-                display_name = parsed_from.display_name or ""
-                new_display_name = insert_tag(display_name, tag, start_pos=0)
-                # Keep the original email address, update the display name
-                new_from = f'"{new_display_name}" <{parsed_from.address}>'
-                add_or_replace_header(msg, "From", new_from)
+            current_from = msg.get(headers.FROM)
+            if current_from:
+                try:
+                    display_name, email_address = parse_full_address(get_header_unicode(current_from))
+                except ValueError:
+                    display_name, email_address = "", get_header_unicode(current_from)
             else:
-                new_from = insert_tag(current_from, tag, start_pos=0)
-                add_or_replace_header(msg, "From", new_from)
+                display_name, email_address = "", ""
+
+            new_display_name = insert_tag_from(display_name, tag)
+
+            # encode using utf-8 pattern and format
+            encoded_name = Header(new_display_name, 'utf-8').encode()
+            new_from_value = formataddr((encoded_name, email_address))
+            add_or_replace_header(msg, "From", new_from_value)
             LOG.d(
-                "Regex mismatch: inserted into From for %s -> %s",
+                "Whitelist mismatch: inserted into From for %s -> %s",
                 contact.website_email,
                 alias,
             )
