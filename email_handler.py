@@ -988,29 +988,6 @@ def forward_email_to_mailbox(
                 contact.website_email,
                 alias,
             )
-        else:
-            current_from = msg.get(headers.FROM)
-            if current_from:
-                try:
-                    display_name, email_address = parse_full_address(
-                        get_header_unicode(current_from)
-                    )
-                except ValueError:
-                    display_name, email_address = "", get_header_unicode(current_from)
-            else:
-                display_name, email_address = "", ""
-
-            new_display_name = insert_tag_from(display_name, tag)
-
-            # encode using utf-8 pattern and format
-            encoded_name = Header(new_display_name, "utf-8").encode()
-            new_from_value = formataddr((encoded_name, email_address))
-            add_or_replace_header(msg, "From", new_from_value)
-            LOG.d(
-                "Whitelist mismatch: inserted into From for %s -> %s",
-                contact.website_email,
-                alias,
-            )
 
     # create PGP email if needed
     if mailbox.pgp_enabled() and user.is_premium() and not alias.disable_pgp:
@@ -1053,6 +1030,23 @@ def forward_email_to_mailbox(
     # replace the email part in from: header
     old_from_header = msg[headers.FROM]
     new_from_header = contact.new_addr()
+
+    if whitelist_mismatch and not user.marker_in_subject:
+        # tag was calculated above when whitelist_mismatch is True
+        try:
+            display_name, email_address = parse_full_address(new_from_header)
+        except ValueError:
+            display_name, email_address = "", new_from_header
+
+        new_display_name = insert_tag_from(display_name, tag)
+        encoded_name = Header(new_display_name, "utf-8").encode()
+        new_from_header = formataddr((encoded_name, email_address))
+        LOG.d(
+            "Whitelist mismatch: inserted into From for %s -> %s",
+            contact.website_email,
+            alias,
+        )
+
     add_or_replace_header(msg, "From", new_from_header)
     LOG.d("From header, new:%s, old:%s", new_from_header, old_from_header)
 
