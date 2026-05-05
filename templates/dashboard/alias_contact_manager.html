@@ -294,7 +294,7 @@
       let contactID = $(this).data("contact");
       let contactEmail = $(this).data("contact-email");
       let that = $(this);
-      
+
       try {
         let res = await fetch(`/api/contacts/${contactID}/toggle_allow_list`, {
           method: "POST",
@@ -308,7 +308,7 @@
           let json = await res.json();
           let whitelistedDomains = json.whitelisted_domains || [];
           let isWhitelistEmpty = json.is_whitelist_empty;
-          
+
           if (json.in_list) {
             toastr.success(`${json.registered_domain} is whitelisted`);
           } else {

@@ -20,7 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 # Import only what we need from SimpleLogin
 from app.db import Session
-from app.models import (Alias, User, BlockBehaviourEnum, VerpType)
+from app.models import Alias, User, BlockBehaviourEnum, VerpType
 from app.alias_utils import try_auto_create
 from app.email_utils import is_reverse_alias, get_verp_info_from_email
 from app.log import LOG
@@ -33,8 +33,8 @@ from app.config import (
 )
 
 # Socket configuration
-SOCKET_NAME = 'simplelogin_policy'
-SOCKET_PATH = f'/var/spool/postfix/sockets/{SOCKET_NAME}'
+SOCKET_NAME = "simplelogin_policy"
+SOCKET_PATH = f"/var/spool/postfix/sockets/{SOCKET_NAME}"
 
 # Database retry configuration
 MAX_DB_RETRIES = 3
@@ -43,7 +43,7 @@ RETRY_DELAY = 1  # seconds
 
 def handle_client(client_socket):
     """Process client connection with pipelining support."""
-    buffer = b''
+    buffer = b""
 
     while True:
         try:
@@ -54,8 +54,8 @@ def handle_client(client_socket):
 
             buffer += chunk
 
-            while b'\n\n' in buffer:
-                request, buffer = buffer.split(b'\n\n', 1)
+            while b"\n\n" in buffer:
+                request, buffer = buffer.split(b"\n\n", 1)
                 process_request(client_socket, request)
 
         except socket.error as e:
@@ -68,26 +68,28 @@ def process_request(client_socket, request_data):
 
     # Parse the request
     attributes = {}
-    for line in request_data.decode('utf-8').split('\n'):
+    for line in request_data.decode("utf-8").split("\n"):
         line = line.strip()
         if not line:
             continue
 
-        if '=' in line:
-            key, value = line.split('=', 1)
+        if "=" in line:
+            key, value = line.split("=", 1)
             attributes[key] = value
 
-    sender = attributes.get('sender', '')
-    recipient = attributes.get('recipient', '')
-    client_address = attributes.get('client_address', '')
+    sender = attributes.get("sender", "")
+    recipient = attributes.get("recipient", "")
+    client_address = attributes.get("client_address", "")
 
     LOG.d(f"Policy check: from={sender} to={recipient} client={client_address}")
     start = time.time()
 
     # Check if this is a valid email address
-    if not recipient or '@' not in recipient:
+    if not recipient or "@" not in recipient:
         elapsed = time.time() - start
-        LOG.w(f"Policy REJECT: invalid recipient format from={sender} to={recipient} time={elapsed:.3f}s")
+        LOG.w(
+            f"Policy REJECT: invalid recipient format from={sender} to={recipient} time={elapsed:.3f}s"
+        )
         client_socket.sendall(b"action=REJECT Invalid email format\n\n")
         return
 
@@ -97,7 +99,9 @@ def process_request(client_socket, request_data):
             # Step 1: detect if the recipient is a reverse alias
             if is_reverse_alias(recipient):
                 elapsed = time.time() - start
-                LOG.i(f"Policy ACCEPT: recipient is reverse alias from={sender} to={recipient} time={elapsed:.3f}s")
+                LOG.i(
+                    f"Policy ACCEPT: recipient is reverse alias from={sender} to={recipient} time={elapsed:.3f}s"
+                )
                 client_socket.sendall(b"action=DUNNO\n\n")
                 return
 
@@ -107,23 +111,30 @@ def process_request(client_socket, request_data):
             is_verp = False
 
             # Transactional VERP
-            if (recipient.startswith(TRANSACTIONAL_BOUNCE_PREFIX) and recipient.endswith(TRANSACTIONAL_BOUNCE_SUFFIX)) or \
-               (verp_info and verp_info[0] == VerpType.transactional):
+            if (
+                recipient.startswith(TRANSACTIONAL_BOUNCE_PREFIX)
+                and recipient.endswith(TRANSACTIONAL_BOUNCE_SUFFIX)
+            ) or (verp_info and verp_info[0] == VerpType.transactional):
                 is_verp = True
 
             # Forward VERP
-            elif (recipient.startswith(BOUNCE_PREFIX) and recipient.endswith(BOUNCE_SUFFIX)) or \
-                 (verp_info and verp_info[0] == VerpType.bounce_forward):
+            elif (
+                recipient.startswith(BOUNCE_PREFIX)
+                and recipient.endswith(BOUNCE_SUFFIX)
+            ) or (verp_info and verp_info[0] == VerpType.bounce_forward):
                 is_verp = True
 
             # Reply VERP
-            elif recipient.startswith(f"{BOUNCE_PREFIX_FOR_REPLY_PHASE}+") or \
-                 (verp_info and verp_info[0] == VerpType.bounce_reply):
+            elif recipient.startswith(f"{BOUNCE_PREFIX_FOR_REPLY_PHASE}+") or (
+                verp_info and verp_info[0] == VerpType.bounce_reply
+            ):
                 is_verp = True
 
             if is_verp:
                 elapsed = time.time() - start
-                LOG.i(f"Policy ACCEPT: recipient is VERP bounce address from={sender} to={recipient} time={elapsed:.3f}s")
+                LOG.i(
+                    f"Policy ACCEPT: recipient is VERP bounce address from={sender} to={recipient} time={elapsed:.3f}s"
+                )
                 client_socket.sendall(b"action=DUNNO\n\n")
                 return
 
@@ -131,18 +142,6 @@ def process_request(client_socket, request_data):
             alias = Alias.get_by(email=recipient)
 
             if alias:
-
-
-
-
-
-
-
-
-
-
-
-
                 # Check if alias is enabled and user is active
                 if not alias.enabled:
                     # Get the user associated with this alias
@@ -151,30 +150,40 @@ def process_request(client_socket, request_data):
 
                     # Check if user has block_behaviour set to return_2xx
                     if user.block_behaviour == BlockBehaviourEnum.return_2xx:
-                        LOG.w(f"Policy PASS (disabled but block_behaviour=return_2xx): from={sender} to={recipient} time={elapsed:.3f}s")
+                        LOG.w(
+                            f"Policy PASS (disabled but block_behaviour=return_2xx): from={sender} to={recipient} time={elapsed:.3f}s"
+                        )
                         client_socket.sendall(b"action=DUNNO\n\n")
                     else:  # user.block_behaviour == BlockBehaviourEnum.return_5xx
-                        LOG.w(f"Policy REJECT: disabled alias from={sender} to={recipient} time={elapsed:.3f}s")
-                        client_socket.sendall(b"action=REJECT Recipient address disabled\n\n")
+                        LOG.w(
+                            f"Policy REJECT: disabled alias from={sender} to={recipient} time={elapsed:.3f}s"
+                        )
+                        client_socket.sendall(
+                            b"action=REJECT Recipient address disabled\n\n"
+                        )
                     return
 
-
-
-#                if not alias.enabled:
-#                    elapsed = time.time() - start
-#                    LOG.w(f"Policy REJECT: disabled alias from={sender} to={recipient} time={elapsed:.3f}s")
-#                    client_socket.sendall(b"action=REJECT Recipient address disabled\n\n")
-#                    return
+                #                if not alias.enabled:
+                #                    elapsed = time.time() - start
+                #                    LOG.w(f"Policy REJECT: disabled alias from={sender} to={recipient} time={elapsed:.3f}s")
+                #                    client_socket.sendall(b"action=REJECT Recipient address disabled\n\n")
+                #                    return
 
                 if not alias.user or not alias.user.is_active:
                     elapsed = time.time() - start
-                    LOG.w(f"Policy REJECT: inactive user from={sender} to={recipient} time={elapsed:.3f}s")
-                    client_socket.sendall(b"action=REJECT Recipient account inactive\n\n")
+                    LOG.w(
+                        f"Policy REJECT: inactive user from={sender} to={recipient} time={elapsed:.3f}s"
+                    )
+                    client_socket.sendall(
+                        b"action=REJECT Recipient account inactive\n\n"
+                    )
                     return
 
                 # Alias exists and is valid
                 elapsed = time.time() - start
-                LOG.i(f"Policy ACCEPT: existing alias from={sender} to={recipient} time={elapsed:.3f}s")
+                LOG.i(
+                    f"Policy ACCEPT: existing alias from={sender} to={recipient} time={elapsed:.3f}s"
+                )
                 client_socket.sendall(b"action=DUNNO\n\n")
                 return
 
@@ -185,7 +194,9 @@ def process_request(client_socket, request_data):
 
                 if new_alias:
                     elapsed = time.time() - start
-                    LOG.i(f"Policy ACCEPT: auto-created alias from={sender} to={recipient} time={elapsed:.3f}s")
+                    LOG.i(
+                        f"Policy ACCEPT: auto-created alias from={sender} to={recipient} time={elapsed:.3f}s"
+                    )
                     client_socket.sendall(b"action=DUNNO\n\n")
                     return
             except Exception as e:
@@ -196,7 +207,9 @@ def process_request(client_socket, request_data):
 
             # If we reach here, we couldn't find or create a valid alias
             elapsed = time.time() - start
-            LOG.w(f"Policy REJECT: no valid alias from={sender} to={recipient} time={elapsed:.3f}s")
+            LOG.w(
+                f"Policy REJECT: no valid alias from={sender} to={recipient} time={elapsed:.3f}s"
+            )
             client_socket.sendall(b"action=REJECT No such recipient\n\n")
             return
 
@@ -206,7 +219,7 @@ def process_request(client_socket, request_data):
 
             try:
                 Session.remove()
-            except:
+            except Exception:
                 pass
 
             if attempt < MAX_DB_RETRIES - 1:
@@ -214,7 +227,7 @@ def process_request(client_socket, request_data):
                 LOG.i(f"Waiting {RETRY_DELAY} second(s) before retry")
                 time.sleep(RETRY_DELAY)
             else:
-                LOG.w(f"All database retries failed, returning temporary failure")
+                LOG.w("All database retries failed, returning temporary failure")
         except socket.error as e:
             LOG.d(f"Socket error (client disconnected): {str(e)}")
             return
@@ -231,7 +244,8 @@ def process_request(client_socket, request_data):
     # If we get here, all database retries have failed
     elapsed = time.time() - start
     LOG.w(
-        f"Policy TEMPFAIL: all database retries failed, deferring email from={sender} to={recipient} time={elapsed:.3f}s")
+        f"Policy TEMPFAIL: all database retries failed, deferring email from={sender} to={recipient} time={elapsed:.3f}s"
+    )
     try:
         client_socket.sendall(b"action=451 4.3.0 Temporary internal error\n\n")
     except socket.error:
@@ -253,7 +267,7 @@ def setup_socket():
 
     try:
         postfix_uid = os.stat(SOCKET_PATH).st_uid
-        postfix_gid = grp.getgrnam('postfix').gr_gid
+        postfix_gid = grp.getgrnam("postfix").gr_gid
         os.chown(SOCKET_PATH, postfix_uid, postfix_gid)
     except (KeyError, PermissionError) as e:
         LOG.w(f"Could not set socket ownership: {str(e)}")
@@ -281,12 +295,12 @@ def run_server():
                     # On any unhandled exception, return a temporary failure
                     try:
                         client.sendall(b"action=451 4.3.0 Temporary internal error\n\n")
-                    except:
+                    except Exception:
                         pass
                 finally:
                     try:
                         client.close()
-                    except:
+                    except Exception:
                         pass
             except KeyboardInterrupt:
                 raise
@@ -313,7 +327,7 @@ if __name__ == "__main__":
             LOG.w("Will continue and try to connect later")
             try:
                 Session.remove()
-            except:
+            except Exception:
                 pass
 
         # Run the server
@@ -325,4 +339,3 @@ if __name__ == "__main__":
         LOG.e(f"Error in policy service: {str(e)}")
         LOG.e(traceback.format_exc())
         sys.exit(1)
-
