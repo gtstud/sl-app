@@ -19,7 +19,10 @@ from app.api.serializer import (
     get_alias_info_v2,
     get_alias_infos_with_pagination_v3,
 )
-from app.contact_utils import contact_toggle_block, perform_contact_deletion_with_whitelist_check
+from app.contact_utils import (
+    contact_toggle_block,
+    perform_contact_deletion_with_whitelist_check,
+)
 from app.dashboard.views.alias_contact_manager import create_contact
 from app.dashboard.views.alias_log import get_alias_log
 from app.db import Session

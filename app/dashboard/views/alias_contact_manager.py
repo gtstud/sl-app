@@ -297,6 +297,12 @@ def alias_contact_manager(alias_id):
 
     import arrow
 
+    whitelisted_domains = (
+        sorted(alias.get_sender_allow_domains())
+        if alias.get_sender_allow_domains()
+        else []
+    )
+
     return render_template(
         "dashboard/alias_contact_manager.html",
         contact_infos=contact_infos,
@@ -310,4 +316,5 @@ def alias_contact_manager(alias_id):
         can_create_contacts=current_user.can_create_contacts(),
         csrf_form=csrf_form,
         arrow=arrow,
+        whitelisted_domains=whitelisted_domains,
     )

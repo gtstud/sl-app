@@ -666,7 +666,9 @@ def test_delete_contact_with_whitelist(flask_client):
 
     assert r.status_code == 200
     # After deleting both, the domain should no longer be whitelisted
-    assert alias.sender_allow_list is None or "example.com" not in alias.sender_allow_list
+    assert (
+        alias.sender_allow_list is None or "example.com" not in alias.sender_allow_list
+    )
 
 
 def test_get_alias(flask_client):

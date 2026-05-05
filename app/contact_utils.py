@@ -190,7 +190,9 @@ def perform_contact_deletion_with_whitelist_check(contact: Contact):
     # Check if domain was whitelisted and if it's the last contact for that domain
     domains = alias.get_sender_allow_domains()
     if domains and registered_domain in domains:
-        other_contact = Contact.filter_by(alias_id=alias.id).filter(Contact.id != contact_id).all()
+        other_contact = (
+            Contact.filter_by(alias_id=alias.id).filter(Contact.id != contact_id).all()
+        )
         if not any(c.registered_domain == registered_domain for c in other_contact):
             domains.remove(registered_domain)
             alias.set_sender_allow_domains(domains)
