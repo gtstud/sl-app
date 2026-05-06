@@ -163,7 +163,7 @@
                       data-clipboard-text="{{ contact.website_send_to() }}">Copy reverse-alias</span>
               </span>
             </div>
-            <div class="col text-right d-flex justify-content-end align-items-center">
+            <div class="col text-right justify-content-end align-items-center whitelist-toggle-container-{{ contact.id }} {% if contact.block_forward %}d-none{% else %}d-flex{% endif %}">
               {% set is_explicitly_whitelisted = alias.sender_allow_list and contact.registered_domain in alias.sender_allow_list %}
               <label class="mb-0 mr-2 cursor" for="whitelist-{{ contact.id }}">Whitelisted:</label>
               <label class="custom-switch cursor mb-0" data-toggle="tooltip" title="{{ 'remove ' + contact.registered_domain + ' from whitelist' if is_explicitly_whitelisted else 'add ' + contact.registered_domain + ' to whitelist' }}" style="padding-left: 0px">
@@ -293,9 +293,15 @@
 
           if (json.block_forward) {
             toastr.success(`${contactEmail} is blocked`);
+            $(`.whitelist-toggle-container-${contactID}`).removeClass("d-flex").addClass("d-none");
           } else {
             toastr.success(`${contactEmail} is unblocked`);
+            $(`.whitelist-toggle-container-${contactID}`).removeClass("d-none").addClass("d-flex");
           }
+
+          let uiTagSpan = $(`.whitelist-label-${contactID}`);
+          uiTagSpan.text(json.ui_tag || "");
+
         } else {
           toastr.error("Sorry for the inconvenience! Could you refresh the page & retry please?", "Unknown Error");
           // reset to the original value

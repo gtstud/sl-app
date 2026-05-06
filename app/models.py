@@ -2173,6 +2173,8 @@ class Contact(Base, ModelMixin):
 
     @property
     def ui_tag(self) -> str:
+        if self.block_forward:
+            return ""
         if not self.alias.sender_allow_list:
             return ""
         if self.domain_in_allow_list:
