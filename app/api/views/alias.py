@@ -485,7 +485,7 @@ def toggle_contact(contact_id):
         return jsonify(error="Forbidden"), 403
     contact_toggle_block(contact)
 
-    return jsonify(block_forward=contact.block_forward), 200
+    return jsonify(block_forward=contact.block_forward, ui_tag=contact.ui_tag), 200
 
 
 @api_bp.route("/contacts/<int:contact_id>/toggle_allow_list", methods=["POST"])
