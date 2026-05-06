@@ -666,9 +666,10 @@ def handle_forward(envelope, msg: Message, rcpt_to: str) -> List[Tuple[bool, str
         return [(True, status.E502)]
 
     whitelist_mismatch = False
-    if not alias.is_sender_allowed(envelope.mail_from):
+    email_to_check = contact.website_email if contact.website_email else envelope.mail_from
+    if not alias.is_sender_allowed(email_to_check):
         whitelist_mismatch = True
-        LOG.d("Sender %s is not in allow list for alias %s", envelope.mail_from, alias)
+        LOG.d("Sender %s is not in allow list for alias %s", email_to_check, alias)
 
     if not alias.enabled or alias.is_trashed() or contact.block_forward:
         if not alias.enabled:
