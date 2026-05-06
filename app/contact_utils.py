@@ -132,11 +132,11 @@ def create_contact(
             and alias.user.auto_whitelist_on_first_contact
         ):
             email_to_extract = (
-                mail_from
-                if mail_from and mail_from != "<>"
-                else email
+                email
+                if email
+                else (mail_from if mail_from and mail_from != "<>" else "")
             )
-            domain = email_to_extract.split("@")[-1]
+            domain = email_to_extract.split("@")[-1] if "@" in email_to_extract else ""
             if domain:
                 alias.set_sender_allow_domains({domain})
                 Session.add(alias)
