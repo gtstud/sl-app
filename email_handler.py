@@ -35,14 +35,11 @@ import argparse
 import email
 import uuid
 import logging
-import arrow
 from email import encoders
 from email.encoders import encode_noop
 from email.message import Message
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
-from email.header import Header
-from email.utils import formataddr
 from email.utils import make_msgid, formatdate, getaddresses
 from io import BytesIO
 from smtplib import SMTPRecipientsRefused, SMTPServerDisconnected
@@ -136,6 +133,11 @@ from app.email_utils import (
     sl_formataddr,
 )
 from app.email_validation import is_valid_email, normalize_reply_email
+from app.whitelist_utils import (
+    get_whitelist_tag,
+    apply_whitelist_tag_to_subject,
+    apply_whitelist_tag_to_from,
+)
 from app.errors import (
     NonReverseAliasInReplyPhase,
     VERPTransactional,
@@ -926,69 +928,11 @@ def forward_email_to_mailbox(
         )
 
     if whitelist_mismatch:
-        now = arrow.utcnow()
-        diff = (now - contact.created_at).total_seconds() / 3600
         emails_count = EmailLog.filter_by(contact_id=contact.id).count()
-
-        if diff < 24 or emails_count <= 2:
-            tag = "⚠️⚠️"
-        elif diff < 192 or emails_count <= 5:
-            tag = "⚠️"
-        else:
-            tag = "〰️"
-
-        def insert_tag_subject(text, tag):
-            text = text or ""
-            if not text:
-                return tag
-
-            non_consec_space_indexes = []
-            for i, char in enumerate(text):
-                if char == " ":
-                    if i == 0 or text[i - 1] != " ":
-                        non_consec_space_indexes.append(i)
-
-            if len(non_consec_space_indexes) >= 3:
-                target_idx = non_consec_space_indexes[2]
-            elif len(non_consec_space_indexes) >= 2:
-                target_idx = non_consec_space_indexes[1]
-            elif len(non_consec_space_indexes) >= 1:
-                target_idx = non_consec_space_indexes[0]
-            else:
-                return text + tag
-
-            return text[:target_idx] + f" {tag} " + text[target_idx + 1 :]
-
-        def insert_tag_from(text, tag):
-            text = text or ""
-            if not text:
-                return tag
-
-            non_consec_space_indexes = []
-            for i, char in enumerate(text):
-                if char == " ":
-                    if i == 0 or text[i - 1] != " ":
-                        non_consec_space_indexes.append(i)
-
-            if non_consec_space_indexes:
-                target_idx = non_consec_space_indexes[0]
-                return text[:target_idx] + f" {tag} " + text[target_idx + 1 :]
-            else:
-                return text + tag
+        tag = get_whitelist_tag(contact, emails_count)
 
         if user.marker_in_subject:
-            current_subject = msg[headers.SUBJECT]
-            current_subject = get_header_unicode(current_subject) or ""
-            new_subject = insert_tag_subject(current_subject, tag)
-
-            # encode using utf-8 pattern
-            new_subject_encoded = Header(new_subject, "utf-8").encode()
-            add_or_replace_header(msg, "Subject", new_subject_encoded)
-            LOG.d(
-                "Whitelist mismatch: inserted into subject for %s -> %s",
-                contact.website_email,
-                alias,
-            )
+            apply_whitelist_tag_to_subject(msg, tag, contact, alias)
 
     # create PGP email if needed
     if mailbox.pgp_enabled() and user.is_premium() and not alias.disable_pgp:
@@ -1034,19 +978,7 @@ def forward_email_to_mailbox(
 
     if whitelist_mismatch and not user.marker_in_subject:
         # tag was calculated above when whitelist_mismatch is True
-        try:
-            display_name, email_address = parse_full_address(new_from_header)
-        except ValueError:
-            display_name, email_address = "", new_from_header
-
-        new_display_name = insert_tag_from(display_name, tag)
-        encoded_name = Header(new_display_name, "utf-8").encode()
-        new_from_header = formataddr((encoded_name, email_address))
-        LOG.d(
-            "Whitelist mismatch: inserted into From for %s -> %s",
-            contact.website_email,
-            alias,
-        )
+        new_from_header = apply_whitelist_tag_to_from(new_from_header, tag, contact, alias)
 
     add_or_replace_header(msg, "From", new_from_header)
     LOG.d("From header, new:%s, old:%s", new_from_header, old_from_header)
